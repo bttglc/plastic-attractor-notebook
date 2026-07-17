@@ -2,17 +2,99 @@
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bttglc/plastic-attractor-notebook/blob/main/plastic_attractor_model_explained.ipynb)
 
-This repository contains one self-contained teaching notebook explaining the plastic-attractor model from Whyte et al. The neuroscience, equations, Python objects, experiment, decoder, eigenvalue analysis, and perturbation control are introduced step by step.
+This repository explains and implements the plastic-attractor model from Whyte et al. It contains:
 
-The implementation is reorganized for clarity and robustness. Appendix A records consequential differences between the paper, the authors' public code, and this cleaned notebook.
+- a self-contained teaching notebook for learning the model step by step;
+- a small multi-file Python implementation for future experiments;
+- one runnable baseline example;
+- behavior-level tests that protect the model while we extend it.
 
-## Run it
+The implementation is reorganized for clarity and robustness. Appendix A of the notebook records consequential differences between the paper, the authors' public code, and this cleaned implementation.
 
-The easiest option is the **Open in Colab** button above. In Colab, select **Runtime -> Run all**.
+## Easiest way to learn it
+
+Use the **Open in Colab** button above. In Colab, select **Runtime -> Run all**.
 
 The ordinary run uses NumPy, Matplotlib, and scikit-learn and can take roughly one or two minutes. The optional full TMS grid is disabled because it can take hours.
 
-## What is included
+## Easiest way to run the multi-file model
+
+The example uses two ordinary functions. You do not need to construct any classes:
+
+```python
+from plastic_attractor import run_baseline, summarize_behavior
+
+result = run_baseline(seed=0, number_of_blocks=20)
+summary = summarize_behavior(result.trials)
+
+print(summary.as_dictionary())
+```
+
+To run it locally:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e .
+python3 examples/run_baseline.py
+```
+
+The full baseline usually finishes in a few seconds on an ordinary laptop.
+
+## How the Python files are organized
+
+Each file answers one question:
+
+```text
+plastic_attractor/
+    task.py          What do green, circle, color task, and left mean?
+    model.py         How do neural activity and Hebbian weights change?
+    experiment.py    What happens during instructions, trials, and blocks?
+    analysis.py      How are accuracy and reaction time summarized?
+    __init__.py      Which names are available to people using the package?
+
+examples/
+    run_baseline.py  What is the shortest complete runnable example?
+
+tests/
+    ...              Does the model still show the expected behavior?
+```
+
+This split follows the scientific story: task, network, experiment, result.
+
+### Suggested reading order
+
+1. Run `examples/run_baseline.py` and see the final measurements.
+2. Read `task.py` to learn the names used by the experiment.
+3. In `model.py`, focus first on `PlasticAttractor.step(...)` and `_update_plastic_weights(...)`.
+4. In `experiment.py`, focus first on `run_blocked_experiment(...)`.
+5. Read `analysis.py` to see how trial results become summary statistics.
+
+Names beginning with `_` are internal helper functions. You can skip them on a first reading and return to them when you want to understand how an instruction or trial is converted into numbers.
+
+## A small amount of object-oriented Python
+
+Most readers can begin with `run_baseline(...)` and ignore the internal classes.
+
+When you do inspect them, the terminology is:
+
+- A **class** describes what information an object holds and what it can do.
+- An **object** is one particular value created from that description.
+- A **dataclass** is mainly a named container for related values.
+- `PlasticAttractor` is the central stateful object. Its activity and weights change as the simulation runs.
+
+For example, `BlockedExperimentConfig` is a dataclass that keeps the seed, number of blocks, timing, and model parameters together. It makes an experiment reproducible without passing many separate arguments between functions.
+
+## Where future changes belong
+
+- Change the task vocabulary or response mappings in `task.py`.
+- Change the neural or Hebbian equations in `model.py`.
+- Add trial-wise switching or new trial schedules in `experiment.py`.
+- Add new measurements in `analysis.py`.
+
+This first multi-file version contains only the published blocked model. It gives us a working control condition before we add the cue-driven proposal model.
+
+## Scientific content included
 
 - the original blocked color-and-shape task;
 - the six feature units and four conjunction units;
@@ -22,7 +104,7 @@ The ordinary run uses NumPy, Matplotlib, and scikit-learn and can take roughly o
 - a compact TMS and frozen-plasticity comparison;
 - live figures generated by the notebook.
 
-This first release explains the published model. Trial-wise cue-driven task switching will be developed separately.
+Trial-wise cue-driven task switching will be developed from this baseline.
 
 ## Scientific sources
 
