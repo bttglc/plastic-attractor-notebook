@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "plastic-attractor-model"
 version = "0.1.0"
 description = "A readable implementation of the Whyte et al. plastic-attractor model"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24"]
 
