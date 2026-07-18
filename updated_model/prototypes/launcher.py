@@ -92,11 +92,15 @@ def build_configs(params):
     ]
 
 
-def run_seeds_parallel(configs, max_workers):
+def run_seeds_parallel(configs, max_workers, label=''):
     # executor.map preserves input order, so results[i] still corresponds to
     # seed=i (needed downstream, e.g. snapshot_seed = 0)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        return list(executor.map(run_switching_experiment, configs))
+        results = []
+        for i, result in enumerate(executor.map(run_switching_experiment, configs), start=1):
+            print(f'  {label}seed {i}/{len(configs)} done')
+            results.append(result)
+        return results
 
 
 def mean_ster(stack):
@@ -409,7 +413,10 @@ if __name__ == '__main__':
         flat = [(v, cfg) for v in active_versions for cfg in build_configs(model_versions[v])]
         print(f'Running {len(flat)} seed jobs across {len(active_versions)} version(s) on {cpu_count} CPUs...')
         with ProcessPoolExecutor(max_workers=cpu_count) as executor:
-            flat_results = list(executor.map(run_switching_experiment, [cfg for _, cfg in flat]))
+            flat_results = []
+            for i, result in enumerate(executor.map(run_switching_experiment, [cfg for _, cfg in flat]), start=1):
+                print(f'  seed job {i}/{len(flat)} done')
+                flat_results.append(result)
         results_by_version = {v: [] for v in active_versions}
         for (v, _), r in zip(flat, flat_results):
             results_by_version[v].append(r)
@@ -420,7 +427,10 @@ if __name__ == '__main__':
         for v in active_versions:
             configs = build_configs(model_versions[v])
             print(f'Running {n_seeds} seeds for {v}...')
-            results_by_version[v] = run_seeds_parallel(configs, min(cpu_count, n_seeds))
+            results_by_version[v] = run_seeds_parallel(configs, min(cpu_count, n_seeds), label=f'{v}: ')
 
     for version_name in active_versions:
+        print(f'Plotting {version_name}...')
         analyze_and_plot(version_name, results_by_version[version_name])
+
+    print('Done: all simulations and plots complete.')
