@@ -25,7 +25,9 @@ num_trials = 48
 # trials per practice block (must be a multiple of 8: 2 cues x 4 stimuli)
 practice_trials = 48
 
-# probability of a rule switch on each trial, one entry per real block
+# probability of a rule switch on each trial, one entry per real block.
+# indexed real-block-relative (0..num_real_blocks-1), i.e. not offset by
+# num_practice_blocks - same convention used for sat_vals's block axis
 switch_probs = [0.125, 0.25, 0.5, 0.75] * 2
 
 # blocks 0 and 1 are practice, the rest are real
@@ -57,7 +59,18 @@ active_version = 'whyte_original'
 # BASIC SIMULATION #
 # ===================================================== #
 
-c_lab = {}; s_lab = {}; r_lab = {}; cue_lab = {}; trans_lab = {}; conj = {}; feat = {};
+# each dict is keyed by seed (rnd) at the top level; plasticattractor_sim's return
+# value for that seed is itself a dict keyed by block. per-trial entries below are
+# vectors of length num_trials (or practice_trials for the practice blocks)
+# c_lab/s_lab: colour/shape identity labels, independent of which rule is active
+# r_lab: which rule was active; cue_lab: which cue signalled it
+# trans_lab: transition type vs previous trial (0 = cue repeat, 1 = cue switch/rule
+# repeat, 2 = rule switch, -1 = first trial of block)
+# conj/feat: conjunction/feature unit activations, shape (n_units, n_timesteps, n_trials)
+# choice: chosen action unit index per trial; acc: 1/0 correct per trial
+# rt: reaction time (timestep of threshold crossing after stimulus offset) per trial
+# weights: weight matrix W, keyed [trial, block]
+c_lab = {}; s_lab = {}; r_lab = {}; cue_lab = {}; trans_lab = {}; conj = {}; feat = {}
 choice = {}; acc = {}; rt = {}; weights = {}
 
 for rnd in range(n_seeds):
@@ -85,15 +98,15 @@ for rnd in range(n_seeds):
     for blk in range(num_real_blocks):
         for trl in range(num_trials):
             W = weights[rnd][trl, blk + num_practice_blocks]
-            [vals, vecs] = np.linalg.eig(W@W.T)
+
+            # vals ~ eigenvalues, vecs ~ 2D array, shape (num_features, num_features). Column vecs[:, i] is the eigenvector for vals[i]
+            vals, vecs = np.linalg.eig(W@W.T)
+
             # number of saturating eigen values (i.e. >1)
             sat_vals[rnd,trl,blk] = np.sum(vals>1)
-            # magnitude of every eigenvalue (not just the largest), for the
-            # by-block-kind spread plot
+            
+            # magnitude of every eigenvalue (not just the largest), for the by-block-kind spread plot
             all_eigvals[rnd,trl,blk,:] = np.abs(vals)
-
-mean_sat_vals = np.mean(np.mean(sat_vals,0),1)
-ster_sat_vals = np.std(np.mean(sat_vals,0),1)/np.sqrt(n_seeds)
 
 # PRACTICE BLOCK EIGENVALUE ANALYSIS #
 # ===================================================== #
@@ -105,10 +118,15 @@ for rnd in range(n_seeds):
     for blk in range(num_practice_blocks):
         for trl in range(practice_trials):
             W = weights[rnd][trl, blk]
-            [vals, vecs] = np.linalg.eig(W@W.T)
+            vals, vecs = np.linalg.eig(W@W.T)
             prac_sat_vals[rnd,trl,blk] = np.sum(vals>1)
 
 # concatenate the practice blocks into one learning curve, block 0 then block 1
+# np.mean(...,0) averages over seeds, leaving shape (practice_trials, num_practice_blocks).
+# reshape(-1) alone would flatten in row-major order, i.e. trial0-block0, trial0-block1,
+# trial1-block0, ... (interleaved). the .T first swaps to (num_practice_blocks,
+# practice_trials), so reshape(-1) instead yields all of block 0's trials followed by
+# all of block 1's trials - the single continuous curve the plot expects
 mean_prac_sat_vals = np.mean(prac_sat_vals,0).T.reshape(-1)
 ster_prac_sat_vals = (np.std(prac_sat_vals,0)/np.sqrt(n_seeds)).T.reshape(-1)
 
@@ -132,6 +150,7 @@ eigmag_by_kind = []
 for k, kind in enumerate(block_kinds):
     kind_blocks = np.where(switch_probs_arr == kind)[0]
 
+    # sat_vals ~ [n_seeds, num_trials, num_real_blocks]
     sat_sub = sat_vals[:,:,kind_blocks]
     per_seed_mean = np.mean(sat_sub, axis=(1,2))
     mean_sat_by_kind[k] = np.mean(per_seed_mean)
@@ -149,22 +168,29 @@ for k, kind in enumerate(block_kinds):
 # plasticattractor_behaviouralanalysis.py. costs are signed so that a
 # positive number always means the harder condition (switch/incongruent)
 # was worse.
+
+def contrast_stats(rt_kind, acc_kind, correct, hard_idx, easy_idx):
+    '''rt/acc cost (hard - easy, easy - hard) plus each condition's own rt and acc, so both share one pass over the trial-type masks'''
+    hard_rt, easy_rt = np.mean(rt_kind[hard_idx & correct]), np.mean(rt_kind[easy_idx & correct])
+    hard_acc, easy_acc = np.mean(acc_kind[hard_idx]), np.mean(acc_kind[easy_idx])
+    return hard_rt - easy_rt, easy_acc - hard_acc, hard_rt, easy_rt, hard_acc, easy_acc
+
 switch_cost_rt = np.zeros([n_seeds, len(block_kinds)])
 switch_cost_acc = np.zeros([n_seeds, len(block_kinds)])
 incong_cost_rt = np.zeros([n_seeds, len(block_kinds)])
 incong_cost_acc = np.zeros([n_seeds, len(block_kinds)])
 
-# pure (non-differenced) RT and accuracy per trial type, computed alongside
-# the costs above since they reuse the same rt_kind/acc_kind/trans_kind/
-# congruent_idx groupings
-repeat_rt = np.zeros([n_seeds, len(block_kinds)])
+# pure (non-differenced) RT and accuracy per trial type, returned by
+# contrast_stats alongside the costs above since they reuse the same
+# rt_kind/acc_kind/trans_kind/congruent_idx groupings
 switch_rt = np.zeros([n_seeds, len(block_kinds)])
-congruent_rt = np.zeros([n_seeds, len(block_kinds)])
+repeat_rt = np.zeros([n_seeds, len(block_kinds)])
 incongruent_rt = np.zeros([n_seeds, len(block_kinds)])
-repeat_acc = np.zeros([n_seeds, len(block_kinds)])
+congruent_rt = np.zeros([n_seeds, len(block_kinds)])
 switch_acc = np.zeros([n_seeds, len(block_kinds)])
-congruent_acc = np.zeros([n_seeds, len(block_kinds)])
+repeat_acc = np.zeros([n_seeds, len(block_kinds)])
 incongruent_acc = np.zeros([n_seeds, len(block_kinds)])
+congruent_acc = np.zeros([n_seeds, len(block_kinds)])
 
 for rnd in range(n_seeds):
     for k, kind in enumerate(block_kinds):
@@ -178,55 +204,38 @@ for rnd in range(n_seeds):
 
         correct = acc_kind == 1
 
-        # switch cost
         switch_idx = trans_kind == 2
         repeat_idx = trans_kind == 0
-        switch_cost_rt[rnd,k] = np.mean(rt_kind[switch_idx & correct]) - np.mean(rt_kind[repeat_idx & correct])
-        switch_cost_acc[rnd,k] = np.mean(acc_kind[repeat_idx]) - np.mean(acc_kind[switch_idx])
-
-        # incongruence cost (congruent = green square, blue circle)
+        # congruent vs incongruent, from the rule -> action mapping in attractor_rnn.py:
+        # colour rule maps green->action0, blue->action1; shape rule maps square->action0,
+        # circle->action1. green square and blue circle get the same action from both
+        # rules (c_kind==s_kind) = congruent. green circle and blue square get opposite
+        # actions from the two rules (c_kind!=s_kind) = incongruent
         congruent_idx = np.logical_or(np.logical_and(c_kind==1,s_kind==1), np.logical_and(c_kind==2,s_kind==2))
         incongruent_idx = ~congruent_idx
-        incong_cost_rt[rnd,k] = np.mean(rt_kind[incongruent_idx & correct]) - np.mean(rt_kind[congruent_idx & correct])
-        incong_cost_acc[rnd,k] = np.mean(acc_kind[congruent_idx]) - np.mean(acc_kind[incongruent_idx])
 
-        # pure RT (correct trials only) and accuracy per trial type
-        repeat_rt[rnd,k] = np.mean(rt_kind[repeat_idx & correct])
-        switch_rt[rnd,k] = np.mean(rt_kind[switch_idx & correct])
-        congruent_rt[rnd,k] = np.mean(rt_kind[congruent_idx & correct])
-        incongruent_rt[rnd,k] = np.mean(rt_kind[incongruent_idx & correct])
-        repeat_acc[rnd,k] = np.mean(acc_kind[repeat_idx])
-        switch_acc[rnd,k] = np.mean(acc_kind[switch_idx])
-        congruent_acc[rnd,k] = np.mean(acc_kind[congruent_idx])
-        incongruent_acc[rnd,k] = np.mean(acc_kind[incongruent_idx])
+        switch_cost_rt[rnd,k], switch_cost_acc[rnd,k], switch_rt[rnd,k], repeat_rt[rnd,k], switch_acc[rnd,k], repeat_acc[rnd,k] \
+            = contrast_stats(rt_kind, acc_kind, correct, switch_idx, repeat_idx)
+        incong_cost_rt[rnd,k], incong_cost_acc[rnd,k], incongruent_rt[rnd,k], congruent_rt[rnd,k], incongruent_acc[rnd,k], congruent_acc[rnd,k] \
+            = contrast_stats(rt_kind, acc_kind, correct, incongruent_idx, congruent_idx)
 
-mean_switch_cost_rt = np.mean(switch_cost_rt,0)
-ster_switch_cost_rt = np.std(switch_cost_rt,0)/np.sqrt(n_seeds)
-mean_switch_cost_acc = np.mean(switch_cost_acc,0)
-ster_switch_cost_acc = np.std(switch_cost_acc,0)/np.sqrt(n_seeds)
+def mean_ster(x):
+    return np.mean(x,0), np.std(x,0)/np.sqrt(n_seeds)
 
-mean_incong_cost_rt = np.mean(incong_cost_rt,0)
-ster_incong_cost_rt = np.std(incong_cost_rt,0)/np.sqrt(n_seeds)
-mean_incong_cost_acc = np.mean(incong_cost_acc,0)
-ster_incong_cost_acc = np.std(incong_cost_acc,0)/np.sqrt(n_seeds)
+mean_switch_cost_rt, ster_switch_cost_rt = mean_ster(switch_cost_rt)
+mean_switch_cost_acc, ster_switch_cost_acc = mean_ster(switch_cost_acc)
+mean_incong_cost_rt, ster_incong_cost_rt = mean_ster(incong_cost_rt)
+mean_incong_cost_acc, ster_incong_cost_acc = mean_ster(incong_cost_acc)
 
-mean_repeat_rt = np.mean(repeat_rt,0)
-ster_repeat_rt = np.std(repeat_rt,0)/np.sqrt(n_seeds)
-mean_switch_rt = np.mean(switch_rt,0)
-ster_switch_rt = np.std(switch_rt,0)/np.sqrt(n_seeds)
-mean_congruent_rt = np.mean(congruent_rt,0)
-ster_congruent_rt = np.std(congruent_rt,0)/np.sqrt(n_seeds)
-mean_incongruent_rt = np.mean(incongruent_rt,0)
-ster_incongruent_rt = np.std(incongruent_rt,0)/np.sqrt(n_seeds)
+mean_repeat_rt, ster_repeat_rt = mean_ster(repeat_rt)
+mean_switch_rt, ster_switch_rt = mean_ster(switch_rt)
+mean_congruent_rt, ster_congruent_rt = mean_ster(congruent_rt)
+mean_incongruent_rt, ster_incongruent_rt = mean_ster(incongruent_rt)
 
-mean_repeat_acc = np.mean(repeat_acc,0)
-ster_repeat_acc = np.std(repeat_acc,0)/np.sqrt(n_seeds)
-mean_switch_acc = np.mean(switch_acc,0)
-ster_switch_acc = np.std(switch_acc,0)/np.sqrt(n_seeds)
-mean_congruent_acc = np.mean(congruent_acc,0)
-ster_congruent_acc = np.std(congruent_acc,0)/np.sqrt(n_seeds)
-mean_incongruent_acc = np.mean(incongruent_acc,0)
-ster_incongruent_acc = np.std(incongruent_acc,0)/np.sqrt(n_seeds)
+mean_repeat_acc, ster_repeat_acc = mean_ster(repeat_acc)
+mean_switch_acc, ster_switch_acc = mean_ster(switch_acc)
+mean_congruent_acc, ster_congruent_acc = mean_ster(congruent_acc)
+mean_incongruent_acc, ster_incongruent_acc = mean_ster(incongruent_acc)
 
 # PERFORMANCE EVOLUTION ACROSS BLOCKS #
 # ===================================================== #
@@ -257,16 +266,6 @@ ster_block_acc = np.std(block_acc,0)/np.sqrt(n_seeds)
 # ===================================================== #
 
 plt.rcParams['font.size'] = 12
-
-trial_index = np.arange(0,num_trials,1)
-
-# number of saturating eigenvalues vs trial
-fig = plt.figure()
-plt.errorbar(trial_index,mean_sat_vals, yerr=ster_sat_vals, color = 'black', capsize=3, linestyle="-",marker="o")
-plt.xlabel("Trial")
-plt.ylabel("Eigenvalues > 1")
-plt.xticks(trial_index[::4])
-fig.savefig(os.path.join(output_dir, 'eigenvalues_above_1_vs_trial.png'), format='png', dpi=1200)
 
 # practice learning curve, with the boundary between the two practice blocks
 prac_index = np.arange(0,practice_trials*num_practice_blocks,1)

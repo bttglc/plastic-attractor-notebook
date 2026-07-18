@@ -304,7 +304,10 @@ def plasticattractor_sim(num_trials, rnd_seed, switch_probs, practice_trials, TM
 
             # labels for classifier
             # colour/shape labels, independent of which rule is active - used
-            # later to decode what the network represents rather than what it did
+            # later to decode what the network represents rather than what it did.
+            # c_labels: 1 = green, 2 = blue. s_labels: 1 = square, 2 = circle
+            # (cond_idx 0-3 = green square, green circle, blue square, blue circle,
+            # matching the stimuli rows above)
             if cond_idx == 0:
                 c_labels[trl] = 1
                 s_labels[trl] = 1
