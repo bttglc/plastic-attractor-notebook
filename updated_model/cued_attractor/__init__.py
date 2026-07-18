@@ -23,6 +23,7 @@ from .analysis import (
     switch_contrast_by_kind,
 )
 from .experiment import (
+    PRACTICE_TASKS,
     ConjunctionClamp,
     EpochProtocol,
     ExperimentResult,
@@ -59,6 +60,7 @@ from .task import (
 
 __all__ = [
     'ALL_STIMULI',
+    'PRACTICE_TASKS',
     'BehavioralSummary',
     'ConjunctionClamp',
     'Contrast',
