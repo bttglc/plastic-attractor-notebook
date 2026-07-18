@@ -116,18 +116,20 @@ def _eigenvalue_magnitudes(weights: np.ndarray) -> np.ndarray:
 
 
 def practice_learning_curve(result: ExperimentResult) -> np.ndarray:
-    """Amplifying-eigenvalue count per practice trial, block 0 then block 1.
+    """Amplifying-eigenvalue count per instruction trial, block 0 then block 1.
 
     One continuous curve of length num_practice_blocks x practice_trials. Trials
-    are already stored in block-then-trial order, so filtering the practice
-    trials preserves the concatenation the plot expects.
+    are already stored in block-then-trial order, so filtering the instruction
+    trials (the ones with the artificial teaching drive, as opposed to the
+    later performance-practice blocks) preserves the concatenation the plot
+    expects.
     """
 
     return np.array(
         [
             _amplifying_count(trial.combined_weights)
             for trial in result.trials
-            if trial.is_practice
+            if trial.is_instruction
         ]
     )
 

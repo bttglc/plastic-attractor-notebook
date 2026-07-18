@@ -241,12 +241,32 @@ class PlasticAttractor:
         # block-diagonal lateral inhibition: a 1 wherever two units share a
         # feature group, so competition stays local to each group. np.ix_
         # handles any group size, including the four-unit cue group.
+        #
+        # for the default 10-unit vocabulary (num_cues_per_rule=2) the four
+        # groups are (0,1) color, (2,3) shape, (4,5,6,7) cues, (8,9) action,
+        # so within_dimension is a 10x10 matrix with 1s in four square blocks
+        # on the diagonal (including each unit's own cell) and 0 elsewhere:
+        #   [[1,1,0,0,0,0,0,0,0,0],
+        #    [1,1,0,0,0,0,0,0,0,0],
+        #    [0,0,1,1,0,0,0,0,0,0],
+        #    [0,0,1,1,0,0,0,0,0,0],
+        #    [0,0,0,0,1,1,1,1,0,0],
+        #    [0,0,0,0,1,1,1,1,0,0],
+        #    [0,0,0,0,1,1,1,1,0,0],
+        #    [0,0,0,0,1,1,1,1,0,0],
+        #    [0,0,0,0,0,0,0,0,1,1],
+        #    [0,0,0,0,0,0,0,0,1,1]]
         within_dimension = np.zeros(
             (self.number_of_feature_units, self.number_of_feature_units)
         )
         for group in self._competing_feature_groups:
             within_dimension[np.ix_(group, group)] = 1.0
 
+        # since within_dimension is already 1 on the diagonal, the returned
+        # matrix's diagonal is self_weight + lateral_weight (0.73 - 0.28 =
+        # 0.45), its within-group off-diagonal entries are lateral_weight
+        # alone (-0.28), and entries between different groups stay 0 (no
+        # recurrent interaction across groups).
         parameters = self.parameters
         return (
             parameters.feature_self_weight * np.eye(self.number_of_feature_units)

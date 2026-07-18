@@ -17,7 +17,8 @@ from cued_attractor import (
 
 
 def _small_config(seed: int = 0) -> SwitchingExperimentConfig:
-    # 2 practice blocks x 8 trials + 1 real block x 4 trials = 20 trials
+    # 2 instruction blocks x 8 trials + 2 performance-practice blocks x 4
+    # trials + 1 real block x 4 trials = 28 trials
     return SwitchingExperimentConfig(
         seed=seed,
         num_practice_blocks=2,
@@ -31,9 +32,9 @@ class CuedSwitchingExperimentTests(unittest.TestCase):
     def test_block_structure_and_trial_counts(self) -> None:
         result = run_switching_experiment(_small_config())
 
-        self.assertEqual(len(result.trials), 20)
-        # three blocks: two practice, one real
-        self.assertEqual(len(result.amplifying_eigenvalue_count_by_block), 3)
+        self.assertEqual(len(result.trials), 28)
+        # five blocks: two instruction, two performance-practice, one real
+        self.assertEqual(len(result.amplifying_eigenvalue_count_by_block), 5)
         self.assertEqual(result.final_combined_weights.shape, (10, 4))
 
     def test_practice_blocks_come_first_and_teach_one_rule_each(self) -> None:
@@ -43,10 +44,19 @@ class CuedSwitchingExperimentTests(unittest.TestCase):
         real = [trial for trial in result.trials if not trial.is_practice]
 
         # practice precedes real, and each practice block teaches a single rule
-        self.assertEqual(len(practice), 16)
+        self.assertEqual(len(practice), 24)
         self.assertEqual(len(real), 4)
-        self.assertTrue(all(trial.task == Task.COLOR for trial in practice[:8]))
-        self.assertTrue(all(trial.task == Task.SHAPE for trial in practice[8:]))
+
+        instruction = [trial for trial in practice if trial.is_instruction]
+        performance_practice = [trial for trial in practice if not trial.is_instruction]
+        self.assertEqual(len(instruction), 16)
+        self.assertEqual(len(performance_practice), 8)
+
+        self.assertTrue(all(trial.task == Task.COLOR for trial in instruction[:8]))
+        self.assertTrue(all(trial.task == Task.SHAPE for trial in instruction[8:]))
+        self.assertTrue(all(trial.task == Task.COLOR for trial in performance_practice[:4]))
+        self.assertTrue(all(trial.task == Task.SHAPE for trial in performance_practice[4:]))
+
         # a constant-rule practice block never contains a rule switch
         self.assertTrue(
             all(

@@ -301,13 +301,15 @@ def real_block_plan(
     num_trials: int,
     vocabulary: Vocabulary,
     random_generator: np.random.RandomState,
+    initial_task: Task | None = None,
 ) -> list[PlannedTrial]:
     """Plan one real block: rule switches w.p. switch_probability, cue signals it.
 
     num_trials must be a multiple of 4 (four stimuli tiled evenly). The first
-    rule is random; each later trial switches rule with the given probability.
-    The cue is drawn uniformly from the active rule's cues, so a rule repeat
-    can still be a cue switch. Stimulus identity is independent of the rule.
+    rule is initial_task if given, otherwise random; each later trial switches
+    rule with the given probability. The cue is drawn uniformly from the
+    active rule's cues, so a rule repeat can still be a cue switch. Stimulus
+    identity is independent of the rule.
     """
 
     if num_trials <= 0 or num_trials % 4:
@@ -315,7 +317,12 @@ def real_block_plan(
     if not 0.0 <= switch_probability <= 1.0:
         raise ValueError('switch_probability must lie between 0 and 1')
 
-    tasks: list[Task] = [PRACTICE_TASKS[random_generator.randint(2)]]
+    first_task = (
+        initial_task
+        if initial_task is not None
+        else PRACTICE_TASKS[random_generator.randint(2)]
+    )
+    tasks: list[Task] = [first_task]
     for _ in range(1, num_trials):
         if random_generator.rand() < switch_probability:
             other = 1 - PRACTICE_TASKS.index(tasks[-1])
@@ -356,8 +363,13 @@ class SwitchingExperimentConfig:
 
     seed: int = 0
     num_practice_blocks: int = 2
-    practice_permutation_repeats: int = 6
+    # matches the original implementation: one instruction trial per (cue x
+    # stimulus) combination, no repeats.
+    practice_permutation_repeats: int = 1
     practice_switch_probability: float = 0.0
+    # after instruction, one performance-practice block of num_trials real
+    # trials per rule: actual behaviour, no teaching drive, learning stays on.
+    include_performance_practice: bool = True
     num_trials: int = 48
     switch_probs: tuple[float, ...] = (0.125, 0.25, 0.5, 0.75) * 2
     protocol: EpochProtocol = field(default_factory=EpochProtocol)
@@ -400,7 +412,14 @@ class SwitchingExperimentConfig:
 
     @property
     def number_of_blocks(self) -> int:
-        return self.num_practice_blocks + len(self.switch_probs)
+        performance_practice_blocks = (
+            len(PRACTICE_TASKS) if self.include_performance_practice else 0
+        )
+        return (
+            self.num_practice_blocks
+            + performance_practice_blocks
+            + len(self.switch_probs)
+        )
 
 
 @dataclass(frozen=True)
@@ -411,6 +430,7 @@ class TrialResult:
     block_index: int
     trial_index_in_block: int
     is_practice: bool
+    is_instruction: bool  # True only on trials with the artificial teaching drive
     switch_probability: float | None  # None on practice trials
     task: Task
     cue: int
@@ -476,7 +496,7 @@ def _teaching_drive(correct: int, vocabulary: Vocabulary) -> np.ndarray:
 
 def _trial_epoch(
     planned: PlannedTrial,
-    is_practice: bool,
+    apply_teaching: bool,
     protocol: EpochProtocol,
     vocabulary: Vocabulary,
 ) -> np.ndarray:
@@ -496,11 +516,13 @@ def _trial_epoch(
         + _cue_vector(planned.cue, vocabulary)
     )
 
-    # practice trials teach the response across the settling window, overriding
-    # whatever base input sits on the action units there. held past the stimulus
-    # because the Hebbian update runs every step and would otherwise reinforce
-    # whatever attractor the network drifted into while settling.
-    if is_practice:
+    # instruction trials teach the response across the settling window,
+    # overriding whatever base input sits on the action units there. held past
+    # the stimulus because the Hebbian update runs every step and would
+    # otherwise reinforce whatever attractor the network drifted into while
+    # settling. performance-practice and real trials leave this off, so the
+    # response is the network's own, unforced choice.
+    if apply_teaching:
         correct = correct_response(vocabulary, planned.task, planned.stimulus)
         teaching_window = protocol.teaching_window
         inputs[
@@ -542,13 +564,14 @@ def _run_trial(
     block_index: int,
     trial_index: int,
     is_practice: bool,
+    apply_teaching: bool,
     switch_probability: float | None,
     planned: PlannedTrial,
     transition_type: TransitionType,
 ) -> TrialResult:
     trajectory = run_epoch(
         model,
-        _trial_epoch(planned, is_practice, config.protocol, vocabulary),
+        _trial_epoch(planned, apply_teaching, config.protocol, vocabulary),
         config.protocol,
         perturbation=config.perturbation,
         learn=config.learn_during_trials,
@@ -564,6 +587,7 @@ def _run_trial(
         block_index=block_index,
         trial_index_in_block=trial_index,
         is_practice=is_practice,
+        is_instruction=apply_teaching,
         switch_probability=switch_probability,
         task=planned.task,
         cue=planned.cue,
@@ -584,6 +608,7 @@ def _run_block(
     vocabulary: Vocabulary,
     block_index: int,
     is_practice: bool,
+    apply_teaching: bool,
     switch_probability: float | None,
     plan: list[PlannedTrial],
 ) -> list[TrialResult]:
@@ -595,6 +620,7 @@ def _run_block(
             block_index=block_index,
             trial_index=trial_index,
             is_practice=is_practice,
+            apply_teaching=apply_teaching,
             switch_probability=switch_probability,
             planned=planned,
             transition_type=_transition_type(plan, trial_index),
@@ -606,7 +632,7 @@ def _run_block(
 def run_switching_experiment(
     config: SwitchingExperimentConfig,
 ) -> ExperimentResult:
-    """Run the practice blocks then the cued real blocks."""
+    """Run instruction, then performance practice, then the cued real blocks."""
 
     vocabulary = build_vocabulary(config.model_parameters.num_cues_per_rule)
 
@@ -620,7 +646,7 @@ def run_switching_experiment(
     trials: list[TrialResult] = []
     eigenvalue_counts: list[int] = []
 
-    # practice blocks: teach with the action-teaching drive. non-switching
+    # instruction blocks: teach with the action-teaching drive. non-switching
     # blocks each teach one fixed rule; switching blocks mix both rules.
     for block_index in range(config.num_practice_blocks):
         if config.practice_switch_probability > 0.0:
@@ -637,22 +663,51 @@ def run_switching_experiment(
         trials.extend(
             _run_block(
                 model, config, vocabulary, block_index,
-                is_practice=True, switch_probability=None, plan=plan,
+                is_practice=True, apply_teaching=True,
+                switch_probability=None, plan=plan,
             )
         )
         eigenvalue_counts.append(model.number_of_amplifying_eigenvalues())
 
+    # performance-practice blocks: one fixed-rule block per rule, num_trials
+    # trials each. no teaching drive, so the response is the network's own;
+    # learning stays on (learn_during_trials), so this is still training.
+    if config.include_performance_practice:
+        for practice_index, task in enumerate(PRACTICE_TASKS):
+            block_index = config.num_practice_blocks + practice_index
+            plan = real_block_plan(
+                switch_probability=0.0,
+                num_trials=config.num_trials,
+                vocabulary=vocabulary,
+                random_generator=random_generator,
+                initial_task=task,
+            )
+            trials.extend(
+                _run_block(
+                    model, config, vocabulary, block_index,
+                    is_practice=True, apply_teaching=False,
+                    switch_probability=None, plan=plan,
+                )
+            )
+            eigenvalue_counts.append(model.number_of_amplifying_eigenvalues())
+
     # real blocks: no teaching, the cue signals the rule that varies trial by
     # trial. learning stays on so the weights keep evolving.
+    performance_practice_blocks = (
+        len(PRACTICE_TASKS) if config.include_performance_practice else 0
+    )
     for real_index, switch_probability in enumerate(config.switch_probs):
-        block_index = config.num_practice_blocks + real_index
+        block_index = (
+            config.num_practice_blocks + performance_practice_blocks + real_index
+        )
         plan = real_block_plan(
             switch_probability, config.num_trials, vocabulary, random_generator
         )
         trials.extend(
             _run_block(
                 model, config, vocabulary, block_index,
-                is_practice=False, switch_probability=switch_probability,
+                is_practice=False, apply_teaching=False,
+                switch_probability=switch_probability,
                 plan=plan,
             )
         )
@@ -669,7 +724,7 @@ def run_switching_experiment(
 def run_baseline(
     seed: int = 0,
     num_trials: int = 48,
-    practice_permutation_repeats: int = 6,
+    practice_permutation_repeats: int = 1,
     switch_probs: tuple[float, ...] = (0.125, 0.25, 0.5, 0.75) * 2,
 ) -> ExperimentResult:
     """Run the standard cued-switching design with plain arguments.
