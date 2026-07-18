@@ -21,7 +21,7 @@ def _small_config(seed: int = 0) -> SwitchingExperimentConfig:
     return SwitchingExperimentConfig(
         seed=seed,
         num_practice_blocks=2,
-        practice_trials=8,
+        practice_permutation_repeats=1,
         num_trials=4,
         switch_probs=(0.5,),
     )
@@ -76,7 +76,7 @@ class CuedSwitchingExperimentTests(unittest.TestCase):
         config = SwitchingExperimentConfig(
             seed=0,
             num_practice_blocks=2,
-            practice_trials=48,
+            practice_permutation_repeats=6,
             num_trials=24,
             switch_probs=(0.5,),
         )

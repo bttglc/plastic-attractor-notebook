@@ -31,20 +31,25 @@ from cued_attractor import (
     switch_contrast_by_kind,
 )
 
-# output dir for figures (kept separate from the flat launcher's output)
-output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
-os.makedirs(output_dir, exist_ok=True)
+# output dir for figures (kept separate from the flat launcher's output);
+# subdir named after the active model version so different versions don't
+# overwrite each other's figures
+base_output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
 
 # RUN CONSTANTS #
 # ===================================================== #
 
-# trials per real block (multiple of 4) and per practice block (multiple of 8)
+# trials per real block (multiple of 4); practice runs the full (cue x
+# stimulus) permutation practice_permutation_repeats times per block
 num_trials = 48
-practice_trials = 48
+practice_permutation_repeats = 6
 
 # per-block rule-switch probability, one entry per real block
 switch_probs = (0.125, 0.25, 0.5, 0.75) * 2
 num_practice_blocks = 2
+# probability of a mid-block rule switch during practice; 0.0 = practice
+# blocks each teach one fixed rule and never switch (the published design)
+practice_switch_probability = 0.0
 
 # number of random seeds (>= ~20 for trustworthy behavioural results)
 n_seeds = 20
@@ -52,10 +57,17 @@ n_seeds = 20
 # MODEL VERSION PARAMETERS #
 # ===================================================== #
 
+# number of cues per rule and of conjunction units, common to every version
+# below unless a version overrides them
+num_cues_per_rule = 2
+number_of_conjunction_units = 4
+
 # named parameter sets for model comparison; add entries to compare against the
 # original Whyte model parameters. each value is a ready ModelParameters.
 model_versions = {
-    'whyte_original': ModelParameters(
+    'whyte_params_2cpr': ModelParameters(
+        number_of_conjunction_units=number_of_conjunction_units,
+        num_cues_per_rule=num_cues_per_rule,
         conjunction_lateral_weight=-0.45, conjunction_self_weight=1.0,
         conjunction_to_feature_gain=0.08,
         feature_lateral_weight=-0.28, feature_self_weight=0.73,
@@ -66,7 +78,10 @@ model_versions = {
         fast_weight_blend=1.0, slow_weight_blend=1.0,
     ),
 }
-active_version = 'whyte_original'
+active_version = 'whyte_params_2cpr'
+
+output_dir = os.path.join(base_output_dir, active_version)
+os.makedirs(output_dir, exist_ok=True)
 
 # RUN EVERY SEED #
 # ===================================================== #
@@ -77,7 +92,8 @@ for seed in range(n_seeds):
     config = SwitchingExperimentConfig(
         seed=seed,
         num_practice_blocks=num_practice_blocks,
-        practice_trials=practice_trials,
+        practice_permutation_repeats=practice_permutation_repeats,
+        practice_switch_probability=practice_switch_probability,
         num_trials=num_trials,
         switch_probs=switch_probs,
         model_parameters=model_versions[active_version],
@@ -165,14 +181,17 @@ mean_block_acc, ster_block_acc = mean_ster(block_acc)
 
 plt.rcParams['font.size'] = 12
 
-# practice learning curve, with the boundary between the two practice blocks
+# practice learning curve, with the boundary between the two practice blocks.
+# trials-per-block comes from the config (doubles under practice switching,
+# since a switching block mixes both rules)
+practice_trials = results[0].config.practice_trials
 prac_index = np.arange(0, practice_trials * num_practice_blocks, 1)
 fig = plt.figure()
 plt.errorbar(prac_index, mean_prac_sat_vals, yerr=ster_prac_sat_vals, color='black', capsize=3, linestyle='-', marker='o')
 plt.axvline(practice_trials - .5, color='grey', linestyle='--')
 plt.xlabel('Practice trial')
 plt.ylabel('Eigenvalues > 1')
-plt.xticks(prac_index[::8])
+plt.xticks(prac_index[:: num_cues_per_rule * 4])
 fig.savefig(os.path.join(output_dir, 'practice_eigenvalues_above_1.png'), format='png', dpi=1200)
 
 # all eigenvalue magnitudes per block kind

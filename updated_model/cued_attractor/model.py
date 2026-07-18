@@ -16,11 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .task import COMPETING_FEATURE_GROUPS, Feature
-
-
-NUMBER_OF_FEATURE_UNITS = len(Feature)
-NUMBER_OF_CONJUNCTION_UNITS = 4
+from .task import build_vocabulary
 
 
 # These dataclasses are named containers. They hold settings or recorded values.
@@ -31,6 +27,9 @@ class ModelParameters:
     The defaults use the values from the authors' public repository. Parameters
     can be overridden directly when we later test new hypotheses.
     """
+
+    number_of_conjunction_units: int = 4
+    num_cues_per_rule: int = 2
 
     baseline_activity: float = 0.175
 
@@ -55,6 +54,10 @@ class ModelParameters:
     slow_weight_blend: float = 1.0
 
     def __post_init__(self) -> None:
+        if self.number_of_conjunction_units <= 0:
+            raise ValueError('number_of_conjunction_units must be positive')
+        if self.num_cues_per_rule <= 0:
+            raise ValueError('num_cues_per_rule must be positive')
         if not 0.0 <= self.baseline_activity <= 1.0:
             raise ValueError('baseline_activity must lie between 0 and 1')
         if self.conjunction_noise_standard_deviation < 0:
@@ -80,7 +83,12 @@ def _bounded_activity(values: np.ndarray) -> np.ndarray:
 
 
 class PlasticAttractor:
-    """Ten feature units recurrently coupled to four conjunction units."""
+    """Feature units recurrently coupled to conjunction units.
+
+    Feature-vector size follows parameters.num_cues_per_rule (10 units, the
+    default, at num_cues_per_rule=2); conjunction population size follows
+    parameters.number_of_conjunction_units.
+    """
 
     def __init__(
         self,
@@ -92,6 +100,10 @@ class PlasticAttractor:
     ) -> None:
         self.parameters = parameters or ModelParameters()
         self.learn = learn
+
+        vocabulary = build_vocabulary(self.parameters.num_cues_per_rule)
+        self._number_of_feature_units = vocabulary.number_of_features
+        self._competing_feature_groups = vocabulary.competing_feature_groups
 
         # The experiment can provide one shared generator so initialization,
         # trial order, and neural noise all remain reproducible from one seed.
@@ -111,11 +123,11 @@ class PlasticAttractor:
 
     @property
     def number_of_feature_units(self) -> int:
-        return NUMBER_OF_FEATURE_UNITS
+        return self._number_of_feature_units
 
     @property
     def number_of_conjunction_units(self) -> int:
-        return NUMBER_OF_CONJUNCTION_UNITS
+        return self.parameters.number_of_conjunction_units
 
     @property
     def state(self) -> NetworkState:
@@ -232,7 +244,7 @@ class PlasticAttractor:
         within_dimension = np.zeros(
             (self.number_of_feature_units, self.number_of_feature_units)
         )
-        for group in COMPETING_FEATURE_GROUPS:
+        for group in self._competing_feature_groups:
             within_dimension[np.ix_(group, group)] = 1.0
 
         parameters = self.parameters

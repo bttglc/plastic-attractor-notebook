@@ -15,23 +15,16 @@ from enum import Enum, IntEnum
 
 
 class Feature(IntEnum):
-    """Meaning of each position in the ten-number feature vector.
+    """Meaning of the four feature-vector positions that never move.
 
-    Order matches the flat attractor_rnn.py script:
-    [green, blue, square, circle, cueA1, cueA2, cueB1, cueB2, action1, action2].
-    The two cue pairs are dissociable from the rule they signal (see RULE_BY_CUE).
+    Cue and action positions shift with num_cues_per_rule, so they aren't fixed
+    enum members; see build_vocabulary below.
     """
 
     GREEN = 0
     BLUE = 1
     SQUARE = 2
     CIRCLE = 3
-    CUE_A1 = 4
-    CUE_A2 = 5
-    CUE_B1 = 6
-    CUE_B2 = 7
-    ACTION_1 = 8
-    ACTION_2 = 9
 
 
 class Task(str, Enum):
@@ -41,34 +34,8 @@ class Task(str, Enum):
     SHAPE = 'shape'
 
 
-class Cue(IntEnum):
-    """The four cue units, two per rule.
-
-    Values equal the Feature index of the matching cue unit, so a Cue can index
-    straight into the feature vector.
-    """
-
-    A1 = Feature.CUE_A1
-    A2 = Feature.CUE_A2
-    B1 = Feature.CUE_B1
-    B2 = Feature.CUE_B2
-
-
 COLOR_FEATURES = (Feature.GREEN, Feature.BLUE)
 SHAPE_FEATURES = (Feature.SQUARE, Feature.CIRCLE)
-CUE_FEATURES = (Feature.CUE_A1, Feature.CUE_A2, Feature.CUE_B1, Feature.CUE_B2)
-RESPONSE_FEATURES = (Feature.ACTION_1, Feature.ACTION_2)
-
-# The neural model reuses these groups for within-group lateral competition. The
-# colour, shape and action groups are pairs; the four cues form a single group,
-# so cue competition is winner-take-all across all four (only one cue is ever
-# shown per trial).
-COMPETING_FEATURE_GROUPS = (
-    COLOR_FEATURES,
-    SHAPE_FEATURES,
-    CUE_FEATURES,
-    RESPONSE_FEATURES,
-)
 
 FEATURES_BY_TASK = {
     Task.COLOR: COLOR_FEATURES,
@@ -80,34 +47,68 @@ IRRELEVANT_FEATURES_BY_TASK = {
     Task.SHAPE: COLOR_FEATURES,
 }
 
-# Cue -> rule it signals. A-cues mean 'attend colour', B-cues mean 'attend
-# shape'. Two cues per rule keep cue identity and abstract rule dissociable
-# (old cue_rule = [0, 0, 1, 1]).
-RULE_BY_CUE = {
-    Cue.A1: Task.COLOR,
-    Cue.A2: Task.COLOR,
-    Cue.B1: Task.SHAPE,
-    Cue.B2: Task.SHAPE,
-}
 
-CUES_BY_TASK = {
-    Task.COLOR: (Cue.A1, Cue.A2),
-    Task.SHAPE: (Cue.B1, Cue.B2),
-}
+# A dataclass generates the routine code needed to store these named values.
+@dataclass(frozen=True)
+class Vocabulary:
+    """Feature-vector layout for a given number of cues per rule.
 
-# Green and square map to action 1. Blue and circle map to action 2.
-RESPONSE_BY_FEATURE = {
-    Feature.GREEN: Feature.ACTION_1,
-    Feature.BLUE: Feature.ACTION_2,
-    Feature.SQUARE: Feature.ACTION_1,
-    Feature.CIRCLE: Feature.ACTION_2,
-}
+    Colour/shape stay fixed at indices 0-3 (Feature enum); the cue block (2
+    rules x num_cues_per_rule) and the two action indices after it shift
+    position with num_cues_per_rule, so they're plain ints here rather than
+    enum members.
+    """
+
+    num_cues_per_rule: int
+    number_of_features: int
+    cues_by_task: dict[Task, tuple[int, ...]]
+    response_features: tuple[int, int]
+    response_by_feature: dict[Feature, int]
+    competing_feature_groups: tuple[tuple[int, ...], ...]
 
 
-def cues_for_task(task: Task) -> tuple[Cue, ...]:
-    """Return the two cues that signal the given rule."""
+def build_vocabulary(num_cues_per_rule: int = 2) -> Vocabulary:
+    """Lay out cue and action positions after the four fixed colour/shape units.
 
-    return CUES_BY_TASK[task]
+    Order matches the flat attractor_rnn.py script at num_cues_per_rule=2:
+    [green, blue, square, circle, cueA1, cueA2, cueB1, cueB2, action1, action2].
+    """
+
+    if num_cues_per_rule <= 0:
+        raise ValueError('num_cues_per_rule must be positive')
+
+    cue_start = 4
+    color_cues = tuple(range(cue_start, cue_start + num_cues_per_rule))
+    shape_cues = tuple(
+        range(cue_start + num_cues_per_rule, cue_start + 2 * num_cues_per_rule)
+    )
+    action_1 = cue_start + 2 * num_cues_per_rule
+    action_2 = action_1 + 1
+    response_features = (action_1, action_2)
+
+    return Vocabulary(
+        num_cues_per_rule=num_cues_per_rule,
+        number_of_features=action_2 + 1,
+        cues_by_task={Task.COLOR: color_cues, Task.SHAPE: shape_cues},
+        response_features=response_features,
+        response_by_feature={
+            Feature.GREEN: action_1, Feature.BLUE: action_2,
+            Feature.SQUARE: action_1, Feature.CIRCLE: action_2,
+        },
+        # The neural model reuses these groups for within-group lateral
+        # competition. Colour, shape and action are pairs; all cues form a
+        # single group, so cue competition is winner-take-all across all of
+        # them (only one cue is ever shown per trial).
+        competing_feature_groups=(
+            COLOR_FEATURES, SHAPE_FEATURES, color_cues + shape_cues, response_features,
+        ),
+    )
+
+
+def cues_for_task(vocabulary: Vocabulary, task: Task) -> tuple[int, ...]:
+    """Return the cues that signal the given rule."""
+
+    return vocabulary.cues_by_task[task]
 
 
 # A dataclass generates the routine code needed to store these named values.
@@ -144,11 +145,11 @@ ALL_STIMULI = (
 )
 
 
-def correct_response(task: Task, stimulus: Stimulus) -> Feature:
-    """Return the action feature selected by the current rule."""
+def correct_response(vocabulary: Vocabulary, task: Task, stimulus: Stimulus) -> int:
+    """Return the action feature index selected by the current rule."""
 
     relevant_feature = stimulus.relevant_feature(task)
-    return RESPONSE_BY_FEATURE[relevant_feature]
+    return vocabulary.response_by_feature[relevant_feature]
 
 
 def is_congruent(stimulus: Stimulus) -> bool:
@@ -156,8 +157,8 @@ def is_congruent(stimulus: Stimulus) -> bool:
 
     Congruent stimuli (green square, blue circle) get the same action from both
     rules; incongruent stimuli (green circle, blue square) get opposite actions.
+    This pairing is fixed regardless of num_cues_per_rule, so it's checked
+    directly rather than via correct_response (which needs a Vocabulary).
     """
 
-    color_response = correct_response(Task.COLOR, stimulus)
-    shape_response = correct_response(Task.SHAPE, stimulus)
-    return color_response == shape_response
+    return (stimulus.color == Feature.GREEN) == (stimulus.shape == Feature.SQUARE)

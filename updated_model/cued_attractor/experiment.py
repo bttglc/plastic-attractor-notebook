@@ -17,14 +17,13 @@ from enum import IntEnum
 
 import numpy as np
 
-from .model import NUMBER_OF_FEATURE_UNITS, ModelParameters, PlasticAttractor
+from .model import ModelParameters, PlasticAttractor
 from .task import (
     ALL_STIMULI,
-    Cue,
-    Feature,
-    RESPONSE_FEATURES,
     Stimulus,
     Task,
+    Vocabulary,
+    build_vocabulary,
     correct_response,
     cues_for_task,
     is_congruent,
@@ -215,46 +214,99 @@ def run_epoch(
 @dataclass(frozen=True)
 class PlannedTrial:
     task: Task
-    cue: Cue
+    cue: int
     stimulus: Stimulus
+
+
+def _balanced_shuffled_deck(
+    task: Task,
+    permutation_repeats: int,
+    vocabulary: Vocabulary,
+    random_generator: np.random.RandomState,
+) -> list[tuple[int, Stimulus]]:
+    """Every (cue x stimulus) combo for task, tiled permutation_repeats times + shuffled."""
+
+    combos = [
+        (cue, stimulus)
+        for cue in cues_for_task(vocabulary, task)
+        for stimulus in ALL_STIMULI
+    ]
+    combos = combos * permutation_repeats
+    order = random_generator.permutation(len(combos))
+    return [combos[i] for i in order]
 
 
 def practice_block_plan(
     task: Task,
-    practice_trials: int,
+    permutation_repeats: int,
+    vocabulary: Vocabulary,
     random_generator: np.random.RandomState,
 ) -> list[PlannedTrial]:
-    """Plan one practice block: every (2 cues x 4 stimuli) combo, tiled + shuffled.
+    """Plan one practice block: every (cue x stimulus) combo, tiled + shuffled.
 
-    practice_trials must be a multiple of 8 so both cues are taught on every
-    stimulus an equal number of times.
+    Runs through the full permutation permutation_repeats times, so every cue
+    is taught on every stimulus an equal number of times.
     """
 
-    if practice_trials <= 0 or practice_trials % 8:
-        raise ValueError('practice_trials must be a positive multiple of 8')
+    if permutation_repeats <= 0:
+        raise ValueError('practice_permutation_repeats must be positive')
 
-    cues = cues_for_task(task)
-    combos = [
-        (cue, stimulus)
-        for cue in cues
-        for stimulus in ALL_STIMULI
-    ]
-    combos = combos * (practice_trials // 8)
+    deck = _balanced_shuffled_deck(task, permutation_repeats, vocabulary, random_generator)
+    return [PlannedTrial(task, cue, stimulus) for cue, stimulus in deck]
 
-    order = random_generator.permutation(len(combos))
-    return [PlannedTrial(task, combos[i][0], combos[i][1]) for i in order]
+
+def switching_practice_block_plan(
+    switch_probability: float,
+    permutation_repeats: int,
+    vocabulary: Vocabulary,
+    random_generator: np.random.RandomState,
+) -> list[PlannedTrial]:
+    """Plan one practice block that may switch rule mid-block, like a real block.
+
+    Unlike real_block_plan's i.i.d. cue draws, this keeps practice's balance
+    guarantee: one shuffled (cue x stimulus) deck per rule, each covering the
+    full permutation permutation_repeats times, so every combo is still taught
+    exactly permutation_repeats times per rule even while switching.
+    """
+
+    if permutation_repeats <= 0:
+        raise ValueError('practice_permutation_repeats must be positive')
+    if not 0.0 <= switch_probability <= 1.0:
+        raise ValueError('switch_probability must lie between 0 and 1')
+
+    decks = {
+        task: _balanced_shuffled_deck(task, permutation_repeats, vocabulary, random_generator)
+        for task in PRACTICE_TASKS
+    }
+    total_trials = sum(len(deck) for deck in decks.values())
+
+    current_task = PRACTICE_TASKS[random_generator.randint(len(PRACTICE_TASKS))]
+    plan: list[PlannedTrial] = []
+    for _ in range(total_trials):
+        if random_generator.rand() < switch_probability:
+            other = PRACTICE_TASKS[1 - PRACTICE_TASKS.index(current_task)]
+            if decks[other]:
+                current_task = other
+        if not decks[current_task]:
+            current_task = next(task for task in PRACTICE_TASKS if decks[task])
+
+        cue, stimulus = decks[current_task].pop(0)
+        plan.append(PlannedTrial(current_task, cue, stimulus))
+
+    return plan
 
 
 def real_block_plan(
     switch_probability: float,
     num_trials: int,
+    vocabulary: Vocabulary,
     random_generator: np.random.RandomState,
 ) -> list[PlannedTrial]:
     """Plan one real block: rule switches w.p. switch_probability, cue signals it.
 
     num_trials must be a multiple of 4 (four stimuli tiled evenly). The first
     rule is random; each later trial switches rule with the given probability.
-    The cue is drawn uniformly from the active rule's two cues, so a rule repeat
+    The cue is drawn uniformly from the active rule's cues, so a rule repeat
     can still be a cue switch. Stimulus identity is independent of the rule.
     """
 
@@ -271,9 +323,10 @@ def real_block_plan(
         else:
             tasks.append(tasks[-1])
 
-    cues = [
-        cues_for_task(task)[random_generator.randint(2)] for task in tasks
-    ]
+    cues = []
+    for task in tasks:
+        task_cues = cues_for_task(vocabulary, task)
+        cues.append(task_cues[random_generator.randint(len(task_cues))])
 
     stimulus_indices = np.tile(np.arange(len(ALL_STIMULI)), num_trials // 4)
     random_generator.shuffle(stimulus_indices)
@@ -303,7 +356,8 @@ class SwitchingExperimentConfig:
 
     seed: int = 0
     num_practice_blocks: int = 2
-    practice_trials: int = 48
+    practice_permutation_repeats: int = 6
+    practice_switch_probability: float = 0.0
     num_trials: int = 48
     switch_probs: tuple[float, ...] = (0.125, 0.25, 0.5, 0.75) * 2
     protocol: EpochProtocol = field(default_factory=EpochProtocol)
@@ -312,10 +366,18 @@ class SwitchingExperimentConfig:
     learn_during_trials: bool = True
 
     def __post_init__(self) -> None:
-        if not 1 <= self.num_practice_blocks <= len(PRACTICE_TASKS):
-            raise ValueError(
-                f'num_practice_blocks must be between 1 and {len(PRACTICE_TASKS)}'
-            )
+        if self.practice_switch_probability == 0.0:
+            if not 1 <= self.num_practice_blocks <= len(PRACTICE_TASKS):
+                raise ValueError(
+                    f'num_practice_blocks must be between 1 and {len(PRACTICE_TASKS)} '
+                    'when practice_switch_probability is 0'
+                )
+        elif self.num_practice_blocks < 1:
+            raise ValueError('num_practice_blocks must be positive')
+        if self.practice_permutation_repeats <= 0:
+            raise ValueError('practice_permutation_repeats must be positive')
+        if not 0.0 <= self.practice_switch_probability <= 1.0:
+            raise ValueError('practice_switch_probability must lie between 0 and 1')
         if not self.switch_probs:
             raise ValueError('switch_probs needs at least one real block')
         if (
@@ -323,6 +385,18 @@ class SwitchingExperimentConfig:
             and self.perturbation.window.stop > self.protocol.number_of_steps
         ):
             raise ValueError('perturbation window must fit inside the epoch')
+
+    @property
+    def practice_trials(self) -> int:
+        """Trials in one practice block (double under mid-block switching, since
+        both rules are then taught within a single block)."""
+
+        per_rule = (
+            self.practice_permutation_repeats
+            * self.model_parameters.num_cues_per_rule
+            * len(ALL_STIMULI)
+        )
+        return per_rule * (2 if self.practice_switch_probability > 0.0 else 1)
 
     @property
     def number_of_blocks(self) -> int:
@@ -339,15 +413,15 @@ class TrialResult:
     is_practice: bool
     switch_probability: float | None  # None on practice trials
     task: Task
-    cue: Cue
+    cue: int
     stimulus: Stimulus
-    correct_response: Feature
-    chosen_response: Feature | None
+    correct_response: int
+    chosen_response: int | None
     reaction_time_in_steps: float
     transition_type: TransitionType
     perturbation: ConjunctionClamp | None
     trajectory: NetworkTrajectory
-    combined_weights: np.ndarray  # snapshot of W after this trial, shape (10, 4)
+    combined_weights: np.ndarray  # snapshot of W after this trial, shape (num_features, num_conjunction_units)
 
     @property
     def correct(self) -> bool:
@@ -371,32 +445,32 @@ class ExperimentResult:
     final_combined_weights: np.ndarray
 
 
-def _stimulus_vector(stimulus: Stimulus) -> np.ndarray:
+def _stimulus_vector(stimulus: Stimulus, vocabulary: Vocabulary) -> np.ndarray:
     """Activate the presented colour and shape units."""
 
-    vector = np.zeros(NUMBER_OF_FEATURE_UNITS)
+    vector = np.zeros(vocabulary.number_of_features)
     vector[stimulus.color] = 1.0
     vector[stimulus.shape] = 1.0
     return vector
 
 
-def _cue_vector(cue: Cue) -> np.ndarray:
+def _cue_vector(cue: int, vocabulary: Vocabulary) -> np.ndarray:
     """Activate the single cue unit for this trial."""
 
-    vector = np.zeros(NUMBER_OF_FEATURE_UNITS)
-    vector[int(cue)] = 1.0
+    vector = np.zeros(vocabulary.number_of_features)
+    vector[cue] = 1.0
     return vector
 
 
-def _teaching_drive(correct: Feature) -> np.ndarray:
-    """Drive on the two action units teaching the correct response.
+def _teaching_drive(correct: int, vocabulary: Vocabulary) -> np.ndarray:
+    """Drive on the action units teaching the correct response.
 
-    +1 on the correct action unit, -1 on the other (old action_teach rows
-    [[1, -1], [-1, 1]]). Returned in RESPONSE_FEATURES order (action1, action2).
+    +1 on the correct action unit, -1 on the others (old action_teach rows
+    [[1, -1], [-1, 1]]). Returned in vocabulary.response_features order.
     """
 
     return np.array(
-        [1.0 if action == correct else -1.0 for action in RESPONSE_FEATURES]
+        [1.0 if action == correct else -1.0 for action in vocabulary.response_features]
     )
 
 
@@ -404,10 +478,11 @@ def _trial_epoch(
     planned: PlannedTrial,
     is_practice: bool,
     protocol: EpochProtocol,
+    vocabulary: Vocabulary,
 ) -> np.ndarray:
     """Build the full external-input schedule (steps x features) for one trial."""
 
-    inputs = np.zeros((protocol.number_of_steps, NUMBER_OF_FEATURE_UNITS))
+    inputs = np.zeros((protocol.number_of_steps, vocabulary.number_of_features))
 
     # isi: negative drive to every feature before the stimulus and after the
     # response window (the response window itself stays at zero input).
@@ -417,7 +492,8 @@ def _trial_epoch(
     # stimulus and its rule cue, presented together.
     stimulus_window = protocol.stimulus_window
     inputs[stimulus_window.start : stimulus_window.stop] = (
-        _stimulus_vector(planned.stimulus) + _cue_vector(planned.cue)
+        _stimulus_vector(planned.stimulus, vocabulary)
+        + _cue_vector(planned.cue, vocabulary)
     )
 
     # practice trials teach the response across the settling window, overriding
@@ -425,12 +501,12 @@ def _trial_epoch(
     # because the Hebbian update runs every step and would otherwise reinforce
     # whatever attractor the network drifted into while settling.
     if is_practice:
-        correct = correct_response(planned.task, planned.stimulus)
+        correct = correct_response(vocabulary, planned.task, planned.stimulus)
         teaching_window = protocol.teaching_window
         inputs[
             teaching_window.start : teaching_window.stop,
-            list(RESPONSE_FEATURES),
-        ] = _teaching_drive(correct)
+            list(vocabulary.response_features),
+        ] = _teaching_drive(correct, vocabulary)
 
     return inputs
 
@@ -438,11 +514,12 @@ def _trial_epoch(
 def _measure_response(
     trajectory: NetworkTrajectory,
     protocol: EpochProtocol,
-) -> tuple[Feature | None, float]:
+    vocabulary: Vocabulary,
+) -> tuple[int | None, float]:
     """Apply the flat script's global-peak and 98%-of-peak response rule."""
 
     eligible_activity = trajectory.feature_activity[
-        protocol.response_search_start :, list(RESPONSE_FEATURES)
+        protocol.response_search_start :, list(vocabulary.response_features)
     ]
     global_peak = float(eligible_activity.max())
     if not np.isfinite(global_peak) or global_peak <= 0.0:
@@ -455,12 +532,13 @@ def _measure_response(
         return None, float('nan')
 
     response_index, first_time = above_threshold[0]
-    return RESPONSE_FEATURES[int(response_index)], float(first_time)
+    return vocabulary.response_features[int(response_index)], float(first_time)
 
 
 def _run_trial(
     model: PlasticAttractor,
     config: SwitchingExperimentConfig,
+    vocabulary: Vocabulary,
     block_index: int,
     trial_index: int,
     is_practice: bool,
@@ -470,7 +548,7 @@ def _run_trial(
 ) -> TrialResult:
     trajectory = run_epoch(
         model,
-        _trial_epoch(planned, is_practice, config.protocol),
+        _trial_epoch(planned, is_practice, config.protocol, vocabulary),
         config.protocol,
         perturbation=config.perturbation,
         learn=config.learn_during_trials,
@@ -478,6 +556,7 @@ def _run_trial(
     chosen_response, reaction_time = _measure_response(
         trajectory,
         config.protocol,
+        vocabulary,
     )
 
     return TrialResult(
@@ -489,7 +568,7 @@ def _run_trial(
         task=planned.task,
         cue=planned.cue,
         stimulus=planned.stimulus,
-        correct_response=correct_response(planned.task, planned.stimulus),
+        correct_response=correct_response(vocabulary, planned.task, planned.stimulus),
         chosen_response=chosen_response,
         reaction_time_in_steps=reaction_time,
         transition_type=transition_type,
@@ -502,6 +581,7 @@ def _run_trial(
 def _run_block(
     model: PlasticAttractor,
     config: SwitchingExperimentConfig,
+    vocabulary: Vocabulary,
     block_index: int,
     is_practice: bool,
     switch_probability: float | None,
@@ -511,6 +591,7 @@ def _run_block(
         _run_trial(
             model=model,
             config=config,
+            vocabulary=vocabulary,
             block_index=block_index,
             trial_index=trial_index,
             is_practice=is_practice,
@@ -527,6 +608,8 @@ def run_switching_experiment(
 ) -> ExperimentResult:
     """Run the practice blocks then the cued real blocks."""
 
+    vocabulary = build_vocabulary(config.model_parameters.num_cues_per_rule)
+
     # One generator controls initialization, trial order, and noise reproducibly.
     random_generator = np.random.RandomState(config.seed)
     model = PlasticAttractor(
@@ -537,15 +620,23 @@ def run_switching_experiment(
     trials: list[TrialResult] = []
     eigenvalue_counts: list[int] = []
 
-    # practice blocks: teach one rule each with the action-teaching drive.
+    # practice blocks: teach with the action-teaching drive. non-switching
+    # blocks each teach one fixed rule; switching blocks mix both rules.
     for block_index in range(config.num_practice_blocks):
-        task = PRACTICE_TASKS[block_index]
-        plan = practice_block_plan(
-            task, config.practice_trials, random_generator
-        )
+        if config.practice_switch_probability > 0.0:
+            plan = switching_practice_block_plan(
+                config.practice_switch_probability,
+                config.practice_permutation_repeats,
+                vocabulary, random_generator,
+            )
+        else:
+            plan = practice_block_plan(
+                PRACTICE_TASKS[block_index], config.practice_permutation_repeats,
+                vocabulary, random_generator,
+            )
         trials.extend(
             _run_block(
-                model, config, block_index,
+                model, config, vocabulary, block_index,
                 is_practice=True, switch_probability=None, plan=plan,
             )
         )
@@ -556,11 +647,11 @@ def run_switching_experiment(
     for real_index, switch_probability in enumerate(config.switch_probs):
         block_index = config.num_practice_blocks + real_index
         plan = real_block_plan(
-            switch_probability, config.num_trials, random_generator
+            switch_probability, config.num_trials, vocabulary, random_generator
         )
         trials.extend(
             _run_block(
-                model, config, block_index,
+                model, config, vocabulary, block_index,
                 is_practice=False, switch_probability=switch_probability,
                 plan=plan,
             )
@@ -578,7 +669,7 @@ def run_switching_experiment(
 def run_baseline(
     seed: int = 0,
     num_trials: int = 48,
-    practice_trials: int = 48,
+    practice_permutation_repeats: int = 6,
     switch_probs: tuple[float, ...] = (0.125, 0.25, 0.5, 0.75) * 2,
 ) -> ExperimentResult:
     """Run the standard cued-switching design with plain arguments.
@@ -590,7 +681,7 @@ def run_baseline(
     config = SwitchingExperimentConfig(
         seed=seed,
         num_trials=num_trials,
-        practice_trials=practice_trials,
+        practice_permutation_repeats=practice_permutation_repeats,
         switch_probs=switch_probs,
     )
     return run_switching_experiment(config)

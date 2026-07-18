@@ -5,4 +5,5 @@ __pycache__/
 *.py[cod]
 build/
 *.egg-info/
-/output/
+**/output/
+*.png
