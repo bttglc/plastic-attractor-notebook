@@ -64,7 +64,7 @@ n_seeds = 20
 
 # named parameter sets live in model_versions_config.py; pick any subset of
 # model_versions.keys() to run in this invocation
-active_versions = ['whyte_params_2cpr']
+active_versions = ['whyte_params_2cpr', '2cpr_Wslow_cap_high']
 
 # PARALLEL SEED EXECUTION #
 # ===================================================== #
@@ -204,9 +204,18 @@ def analyze_and_plot(version_name, results):
     plt.xticks(prac_index[:: num_cues_per_rule * 4])
     fig.savefig(os.path.join(output_dir, 'practice_eigenvalues_above_1.png'), format='png', dpi=1200)
 
-    # all eigenvalue magnitudes per block kind
+    # all eigenvalue magnitudes per block kind: individual pooled values
+    # (jittered scatter) plus their mean +/- SE
+    rng = np.random.default_rng(0)
     fig, ax = plt.subplots()
-    ax.boxplot(eigmag_by_kind, tick_labels=kind_labels, showfliers=False)
+    for i, values in enumerate(eigmag_by_kind):
+        jitter = rng.uniform(-0.15, 0.15, size=values.shape)
+        ax.scatter(np.full(values.shape, i) + jitter, values, s=4, alpha=0.15, color='grey', linewidths=0)
+    eigmag_mean = [np.mean(values) for values in eigmag_by_kind]
+    eigmag_ster = [np.std(values) / np.sqrt(values.size) for values in eigmag_by_kind]
+    ax.errorbar(range(len(kinds)), eigmag_mean, yerr=eigmag_ster, color='black', capsize=3, linestyle='-', marker='o', zorder=3)
+    ax.set_xticks(range(len(kinds)))
+    ax.set_xticklabels(kind_labels)
     ax.set_xlabel('Switch probability (block kind)')
     ax.set_ylabel('Eigenvalue magnitude')
     fig.savefig(os.path.join(output_dir, 'eigenvalue_magnitudes_by_block_kind.png'), format='png', dpi=1200)
@@ -345,31 +354,39 @@ def analyze_and_plot(version_name, results):
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, 'connectivity_WWt_snapshot.png'), format='png', dpi=1200)
 
-    # attractor path diagram: cue -> conjunction unit -> action, following each
-    # conjunction unit's most strongly bound cue and action (its learned rule
-    # mapping). node positions are normalized fractions per column so the layout
-    # stays sensible regardless of num_cues_per_rule / number_of_conjunction_units
+    # attractor path diagram: {stimulus, cue} -> conjunction unit -> action,
+    # following each conjunction unit's most strongly bound stimulus, cue and
+    # action (its learned rule mapping). stimulus and cue are both direct
+    # inputs to the conjunction units (neither feeds through the other), so
+    # they share the x=0 column and are told apart by line style. node
+    # positions are normalized fractions per column so the layout stays
+    # sensible regardless of num_cues_per_rule / number_of_conjunction_units
+    stimulus_features = (Feature.GREEN, Feature.BLUE, Feature.SQUARE, Feature.CIRCLE)
     all_cues = vocabulary.cues_by_task[Task.COLOR] + vocabulary.cues_by_task[Task.SHAPE]
+    all_inputs = stimulus_features + all_cues
     actions = vocabulary.response_features
 
     def frac_positions(items):
         n = len(items)
         return {item: (i / (n - 1) if n > 1 else 0.5) for i, item in enumerate(items)}
 
-    cue_y = frac_positions(all_cues)
+    input_y = frac_positions(all_inputs)
     conj_y = frac_positions(range(number_of_conjunction_units))
     action_y = frac_positions(actions)
 
     fig, ax = plt.subplots(figsize=(5, 5))
     colors = plt.cm.tab10(np.linspace(0, 1, number_of_conjunction_units))
     for j in range(number_of_conjunction_units):
+        top_stimulus = max(stimulus_features, key=lambda f: W[f, j])
         top_cue = max(all_cues, key=lambda f: W[f, j])
         top_action = max(actions, key=lambda f: W[f, j])
-        ax.plot([0, 1], [cue_y[top_cue], conj_y[j]], color=colors[j], linewidth=2, marker='o')
+        ax.plot([0, 1], [input_y[top_stimulus], conj_y[j]], color=colors[j], linewidth=2,
+                linestyle='dashed', marker='o')
+        ax.plot([0, 1], [input_y[top_cue], conj_y[j]], color=colors[j], linewidth=2, marker='o')
         ax.plot([1, 2], [conj_y[j], action_y[top_action]], color=colors[j], linewidth=2, marker='o')
 
-    for cue in all_cues:
-        ax.text(-0.05, cue_y[cue], feature_labels[cue], ha='right', va='center')
+    for feature in all_inputs:
+        ax.text(-0.05, input_y[feature], feature_labels[feature], ha='right', va='center')
     for j in range(number_of_conjunction_units):
         ax.text(1, conj_y[j] + 0.03, f'C{j}', ha='center', va='bottom')
     for action in actions:
@@ -377,13 +394,11 @@ def analyze_and_plot(version_name, results):
 
     ax.set_xlim(-0.6, 2.6)
     ax.set_xticks([0, 1, 2])
-    ax.set_xticklabels(['Cue', 'Conjunction unit', 'Action'])
+    ax.set_xticklabels(['Stimulus / Cue', 'Conjunction unit', 'Action'])
     ax.set_yticks([])
     ax.set_title(f'Learned attractor paths (seed {snapshot_seed}, final)')
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, 'attractor_paths_snapshot.png'), format='png', dpi=1200)
-
-    plt.show()
     plt.close('all')
 
 
