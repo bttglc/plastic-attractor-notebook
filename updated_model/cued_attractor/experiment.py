@@ -20,6 +20,7 @@ import numpy as np
 from .model import ModelParameters, PlasticAttractor
 from .task import (
     ALL_STIMULI,
+    IRRELEVANT_FEATURES_BY_TASK,
     Stimulus,
     Task,
     Vocabulary,
@@ -522,6 +523,10 @@ def _trial_epoch(
     # otherwise reinforce whatever attractor the network drifted into while
     # settling. performance-practice and real trials leave this off, so the
     # response is the network's own, unforced choice.
+    #
+    # matches the flat script's rules table: the task-irrelevant colour/shape
+    # pair also gets overridden, to a neutral .5 rather than the +-1 used for
+    # the relevant pair and the response units, for the same window.
     if apply_teaching:
         correct = correct_response(vocabulary, planned.task, planned.stimulus)
         teaching_window = protocol.teaching_window
@@ -529,6 +534,10 @@ def _trial_epoch(
             teaching_window.start : teaching_window.stop,
             list(vocabulary.response_features),
         ] = _teaching_drive(correct, vocabulary)
+        inputs[
+            teaching_window.start : teaching_window.stop,
+            list(IRRELEVANT_FEATURES_BY_TASK[planned.task]),
+        ] = 0.5
 
     return inputs
 

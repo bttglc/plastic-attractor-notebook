@@ -331,7 +331,7 @@ def analyze_and_plot(version_name, results):
 
     # W heatmap, with a red box on each conjunction unit's most strongly bound
     # feature (the attractor association that unit has learned)
-    fig, ax = plt.subplots(figsize=(4, 6))
+    fig, ax = plt.subplots(figsize=(9, 6))
     im = ax.imshow(W, aspect='auto', cmap='viridis')
     ax.set_yticks(range(vocabulary.number_of_features))
     ax.set_yticklabels(feature_labels)
@@ -347,7 +347,7 @@ def analyze_and_plot(version_name, results):
 
     # W @ W.T heatmap: the feedback matrix behind feedback_eigenvalues /
     # amplifying-eigenvalue counts
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(9, 6))
     im = ax.imshow(WWt, cmap='viridis')
     ax.set_yticks(range(vocabulary.number_of_features))
     ax.set_yticklabels(feature_labels)
@@ -378,16 +378,26 @@ def analyze_and_plot(version_name, results):
     conj_y = frac_positions(range(number_of_conjunction_units))
     action_y = frac_positions(actions)
 
-    fig, ax = plt.subplots(figsize=(5, 5))
+    def top2(items, j):
+        ranked = sorted(items, key=lambda f: W[f, j], reverse=True)
+        return ranked[0], ranked[1]
+
+    fig, ax = plt.subplots(figsize=(9, 5))
     colors = plt.cm.tab10(np.linspace(0, 1, number_of_conjunction_units))
     for j in range(number_of_conjunction_units):
-        top_stimulus = max(stimulus_features, key=lambda f: W[f, j])
-        top_cue = max(all_cues, key=lambda f: W[f, j])
-        top_action = max(actions, key=lambda f: W[f, j])
+        top_stimulus, second_stimulus = top2(stimulus_features, j)
+        top_cue, second_cue = top2(all_cues, j)
+        top_action, second_action = top2(actions, j)
         ax.plot([0, 1], [input_y[top_stimulus], conj_y[j]], color=colors[j], linewidth=2,
                 linestyle='dashed', marker='o')
         ax.plot([0, 1], [input_y[top_cue], conj_y[j]], color=colors[j], linewidth=2, marker='o')
         ax.plot([1, 2], [conj_y[j], action_y[top_action]], color=colors[j], linewidth=2, marker='o')
+        ax.plot([0, 1], [input_y[second_stimulus], conj_y[j]], color=colors[j], linewidth=2,
+                linestyle='dashed', marker='o', alpha=0.3)
+        ax.plot([0, 1], [input_y[second_cue], conj_y[j]], color=colors[j], linewidth=2, marker='o',
+                alpha=0.3)
+        ax.plot([1, 2], [conj_y[j], action_y[second_action]], color=colors[j], linewidth=2, marker='o',
+                alpha=0.3)
 
     for feature in all_inputs:
         ax.text(-0.05, input_y[feature], feature_labels[feature], ha='right', va='center')
@@ -400,6 +410,8 @@ def analyze_and_plot(version_name, results):
     ax.set_xticks([0, 1, 2])
     ax.set_xticklabels(['Stimulus / Cue', 'Conjunction unit', 'Action'])
     ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
     ax.set_title(f'Learned attractor paths (seed {snapshot_seed}, final)')
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, 'attractor_paths_snapshot.png'), format='png', dpi=1200)
