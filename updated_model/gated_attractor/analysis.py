@@ -14,7 +14,13 @@ from statistics import fmean
 
 import numpy as np
 
-from .experiment import ExperimentResult, TransitionType, TrialResult
+from .experiment import (
+    ExperimentResult,
+    TransitionType,
+    TrialResult,
+    gate_winner_matches_task,
+)
+from .task import Feature
 
 
 @dataclass(frozen=True)
@@ -286,3 +292,128 @@ def performance_by_block(
         )
 
     return reaction_time, accuracy
+
+
+# ROOT-CAUSE DIAGNOSTICS BY BLOCK #
+# ===================================================== #
+
+def gate_accuracy_by_block(result: ExperimentResult) -> np.ndarray:
+    """Fraction of trials per block where the gate's winner matched the task.
+
+    NaN where gating is disabled (nothing to measure) or a block has no
+    trials, mirroring performance_by_block's block-index convention.
+    """
+
+    number_of_blocks = result.config.number_of_blocks
+    accuracy = np.full(number_of_blocks, np.nan)
+    if result.config.model_parameters.number_of_gating_units == 0:
+        return accuracy
+
+    protocol = result.config.protocol
+    for block_index in range(number_of_blocks):
+        block_trials = [
+            trial for trial in result.trials if trial.block_index == block_index
+        ]
+        if not block_trials:
+            continue
+        accuracy[block_index] = _mean_or_nan([
+            float(gate_winner_matches_task(trial.trajectory, protocol, trial.task))
+            for trial in block_trials
+        ])
+
+    return accuracy
+
+
+def no_response_rate_by_block(result: ExperimentResult) -> np.ndarray:
+    """Fraction of trials per block with no measurable response
+    (chosen_response is None), mirroring performance_by_block's convention.
+    """
+
+    number_of_blocks = result.config.number_of_blocks
+    rate = np.full(number_of_blocks, np.nan)
+
+    for block_index in range(number_of_blocks):
+        block_trials = [
+            trial for trial in result.trials if trial.block_index == block_index
+        ]
+        if not block_trials:
+            continue
+        rate[block_index] = _mean_or_nan(
+            [float(trial.chosen_response is None) for trial in block_trials]
+        )
+
+    return rate
+
+
+# colour/shape rows of W, in a fixed order every diagnostic below shares
+_COLOUR_SHAPE_FEATURES = (Feature.GREEN, Feature.BLUE, Feature.SQUARE, Feature.CIRCLE)
+
+
+def colour_shape_row_norms_by_block(result: ExperimentResult) -> np.ndarray:
+    """L2 norm of W's green/blue/square/circle rows, one snapshot (the
+    block's last trial) per block. Shape (num_blocks, 4).
+    """
+
+    number_of_blocks = result.config.number_of_blocks
+    rows = np.array([int(feature) for feature in _COLOUR_SHAPE_FEATURES])
+    norms = np.full((number_of_blocks, rows.size), np.nan)
+
+    for block_index in range(number_of_blocks):
+        block_trials = [
+            trial for trial in result.trials if trial.block_index == block_index
+        ]
+        if not block_trials:
+            continue
+        norms[block_index] = np.linalg.norm(
+            block_trials[-1].combined_weights[rows], axis=1
+        )
+
+    return norms
+
+
+# ROOT-CAUSE DIAGNOSTICS BY BLOCK KIND #
+# ===================================================== #
+
+@dataclass(frozen=True)
+class ActivityLevels:
+    """Settled feature activity, split by whether the current rule cares
+    about it."""
+
+    relevant: float
+    irrelevant: float
+
+
+# how many steps at the end of response_window count as "settled", not the
+# transient right after the stimulus/cue turn off
+_SETTLED_ACTIVITY_WINDOW_STEPS = 20
+
+
+def relevant_irrelevant_activity_by_kind(
+    result: ExperimentResult,
+) -> dict[float, ActivityLevels]:
+    """Mean settled (relevant, irrelevant) feature activity over each block
+    kind's real trials, averaged over response_window's last
+    _SETTLED_ACTIVITY_WINDOW_STEPS steps.
+    """
+
+    window = result.config.protocol.response_window
+    start = max(window.start, window.stop - _SETTLED_ACTIVITY_WINDOW_STEPS)
+
+    levels: dict[float, ActivityLevels] = {}
+    for kind, trials in _real_trials_by_kind(result).items():
+        relevant_values = []
+        irrelevant_values = []
+        for trial in trials:
+            activity = trial.trajectory.feature_activity[start : window.stop]
+            relevant_values.append(
+                float(activity[:, trial.stimulus.relevant_feature(trial.task)].mean())
+            )
+            irrelevant_values.append(
+                float(activity[:, trial.stimulus.irrelevant_feature(trial.task)].mean())
+            )
+        levels[kind] = ActivityLevels(
+            relevant=_mean_or_nan(relevant_values),
+            irrelevant=_mean_or_nan(irrelevant_values),
+        )
+
+    return levels

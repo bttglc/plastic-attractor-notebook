@@ -42,8 +42,10 @@ class ModelParameters:
     feature_to_conjunction_gain: float = 0.04
 
     # gating units: an optional third population of inhibitory interneurons that
-    # learn, from the cue, to suppress the task-irrelevant colour/shape dimension
-    # in real trials (reproducing the teaching phase's 0.5 neutralisation). 0
+    # learn, from the cue, to suppress the task-irrelevant colour/shape
+    # dimension -- the same mechanism on instruction and real trials alike,
+    # since both present the stimulus identically (see task.py's
+    # gate_target_indices for the hardcoded per-gate suppression targets). 0
     # disables them entirely, leaving the published dynamics bit-for-bit intact.
     number_of_gating_units: int = 0
     cue_to_gating_gain: float = 1.0
@@ -165,6 +167,7 @@ class PlasticAttractor:
         # Cue units feed the gates; only colour/shape units may be inhibited.
         self._cue_indices = np.array(vocabulary.all_cue_indices)
         self._suppressible_indices = np.array(vocabulary.suppressible_feature_indices)
+        self._gate_target_indices = vocabulary.gate_target_indices
 
         # The experiment can provide one shared generator so initialization,
         # trial order, and neural noise all remain reproducible from one seed.
@@ -578,17 +581,36 @@ class PlasticAttractor:
             0.0, parameters.gating_maximum_slow_weight, size=input_shape,
         )
 
+        # each gate may only ever land weight on the OTHER dimension's rows
+        # (colour gate -> shape rows, shape gate -> colour rows), hardcoded
+        # from gate_target_indices rather than left for the reward-gated
+        # trace to discover -- both dimensions are simultaneously active with
+        # the correct gate throughout every stimulus_window regardless of
+        # which one the rule cares about, so an unconstrained trace
+        # potentiates suppression of a gate's own dimension just as readily
+        # as the genuinely irrelevant one.
+        row_position = {
+            feature_index: position
+            for position, feature_index in enumerate(self._suppressible_indices)
+        }
+        self._gating_output_mask = np.zeros((self._suppressible_indices.size, num_gates), dtype=bool)
+        for gate_index, target_indices in enumerate(self._gate_target_indices):
+            for feature_index in target_indices:
+                self._gating_output_mask[row_position[feature_index], gate_index] = True
+
         self._gating_output_fast_weights = np.zeros(
             (self.number_of_feature_units, num_gates)
         )
-        self._gating_output_fast_weights[self._suppressible_indices] = self._random.uniform(
-            0.0, parameters.gating_maximum_fast_weight, size=output_shape,
+        self._gating_output_fast_weights[self._suppressible_indices] = (
+            self._random.uniform(0.0, parameters.gating_maximum_fast_weight, size=output_shape)
+            * self._gating_output_mask
         )
         self._gating_output_slow_weights = np.zeros(
             (self.number_of_feature_units, num_gates)
         )
-        self._gating_output_slow_weights[self._suppressible_indices] = self._random.uniform(
-            0.0, parameters.gating_maximum_slow_weight, size=output_shape,
+        self._gating_output_slow_weights[self._suppressible_indices] = (
+            self._random.uniform(0.0, parameters.gating_maximum_slow_weight, size=output_shape)
+            * self._gating_output_mask
         )
 
         self._combine_gating_weights()
@@ -641,9 +663,14 @@ class PlasticAttractor:
             decay * self._gating_input_trace
             + np.outer(centered_gates, centered_cues)
         )
+        # masked to gate_target_indices so a gate's own dimension can never
+        # accumulate a nonzero trace, matching how _update_plastic_weights
+        # masks change[cue_indices] every step rather than only at init.
+        output_contribution = np.outer(centered_features, centered_gates)[rows]
+        output_contribution[~self._gating_output_mask] = 0.0
         self._gating_output_trace = (
             decay * self._gating_output_trace
-            + np.outer(centered_features, centered_gates)[rows]
+            + output_contribution
         )
 
     def _combine_gating_weights(self) -> None:

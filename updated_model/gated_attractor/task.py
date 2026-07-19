@@ -80,6 +80,25 @@ class Vocabulary:
 
         return tuple(int(feature) for feature in COLOR_FEATURES + SHAPE_FEATURES)
 
+    @property
+    def gate_target_indices(self) -> tuple[tuple[int, ...], ...]:
+        """Feature rows each rule's gate is allowed to suppress: its task's
+        irrelevant pair, never its own.
+
+        Ordered to match Task's declaration order (colour gate first, shape
+        gate second) -- the same convention experiment.py's PRACTICE_TASKS
+        relies on for gate indexing. Hardcoded rather than left for the
+        reward-gated trace to discover: both dimensions are simultaneously
+        active with the correct gate throughout every stimulus_window
+        regardless of which one the rule cares about, so an unconstrained
+        trace has no signal to prefer suppressing one over the other.
+        """
+
+        return tuple(
+            tuple(int(feature) for feature in IRRELEVANT_FEATURES_BY_TASK[task])
+            for task in Task
+        )
+
 
 def build_vocabulary(num_cues_per_rule: int = 2) -> Vocabulary:
     """Lay out cue and action positions after the four fixed colour/shape units.
@@ -146,6 +165,15 @@ class Stimulus:
             return self.color
         if task == Task.SHAPE:
             return self.shape
+        raise ValueError(f'Unknown task: {task!r}')
+
+    def irrelevant_feature(self, task: Task) -> Feature:
+        """Select the colour or shape the current rule ignores."""
+
+        if task == Task.COLOR:
+            return self.shape
+        if task == Task.SHAPE:
+            return self.color
         raise ValueError(f'Unknown task: {task!r}')
 
 

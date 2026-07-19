@@ -13,9 +13,9 @@ number_of_conjunction_units = 4
 model_versions = {
     # adds 2 gating units (one per rule) on top of the whyte_params_2cpr
     # base: self-sustaining inhibitory interneurons, driven by the cue, that
-    # learn to suppress the task-irrelevant colour/shape pair. this extends
-    # the teaching phase's explicit 0.5 neutralisation into real trials,
-    # where only the cue signals which rule is active. comments below cover
+    # learn to suppress the task-irrelevant colour/shape pair, on instruction
+    # and real trials alike (both present the stimulus the same way; only the
+    # cue says which rule is active). comments below cover
     # only the gating_* fields and why each one's value was chosen; the
     # mechanism itself (why the gate reads the cue only during
     # stimulus_window, why consolidation reward is the gate's own winner

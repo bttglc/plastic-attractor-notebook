@@ -20,7 +20,6 @@ import numpy as np
 from .model import ModelParameters, PlasticAttractor
 from .task import (
     ALL_STIMULI,
-    IRRELEVANT_FEATURES_BY_TASK,
     Stimulus,
     Task,
     Vocabulary,
@@ -573,7 +572,7 @@ def _gate_drive_schedule(
     return drive
 
 
-def _gate_winner_matches_task(
+def gate_winner_matches_task(
     trajectory: NetworkTrajectory,
     protocol: EpochProtocol,
     task: Task,
@@ -627,13 +626,11 @@ def _trial_epoch(
     # settling. performance-practice and real trials leave this off, so the
     # response is the network's own, unforced choice.
     #
-    # the task-irrelevant colour/shape pair is also overridden here, to a
-    # neutral .5 rather than the +-1 used for the response units, for the same
-    # window. this does NOT come from attractor_rnn.py (the cued flat script
-    # has no such override anywhere); it's carried over from the separate,
-    # pre-stimulus rule-cue instruction used by the non-cued published model
-    # (published_model/plastic_attractor/experiment.py's rule vector), kept
-    # here as a deliberate local addition to the cued teaching drive.
+    # the task-irrelevant colour/shape pair gets no override: the stimulus
+    # above already presents it exactly as a real trial would (whichever
+    # colour/shape was actually shown, at 1.0, regardless of the current
+    # rule). Suppressing it is the gate's job now (gate_target_indices,
+    # model.py), so teaching stays physically identical to a real trial.
     if apply_teaching:
         correct = correct_response(vocabulary, planned.task, planned.stimulus)
         teaching_window = protocol.teaching_window
@@ -641,10 +638,6 @@ def _trial_epoch(
             teaching_window.start : teaching_window.stop,
             list(vocabulary.response_features),
         ] = _teaching_drive(correct, vocabulary)
-        inputs[
-            teaching_window.start : teaching_window.stop,
-            list(IRRELEVANT_FEATURES_BY_TASK[planned.task]),
-        ] = 0.5
 
     return inputs
 
@@ -710,7 +703,7 @@ def _run_trial(
     # Reward-gated consolidation of the gate eligibility trace (three-factor
     # rule), every trial: +1 potentiates what the trial's coincident activity
     # accumulated, -1 applies the same trace with a flipped sign. Reward comes
-    # from _gate_winner_matches_task (did the gate itself pick the true rule),
+    # from gate_winner_matches_task (did the gate itself pick the true rule),
     # not overall response correctness -- an earlier version used response
     # correctness and it consolidated cleanly during instruction (always
     # correct there, response forced) but derailed within the first
@@ -725,7 +718,7 @@ def _run_trial(
     # original derailment bug. No-op when gating is disabled.
     ground_truth = correct_response(vocabulary, planned.task, planned.stimulus)
     if model.number_of_gating_units > 0:
-        gate_is_correct = _gate_winner_matches_task(trajectory, config.protocol, planned.task)
+        gate_is_correct = gate_winner_matches_task(trajectory, config.protocol, planned.task)
         model.consolidate_gating_trace(1.0 if gate_is_correct else -1.0)
 
     return TrialResult(
