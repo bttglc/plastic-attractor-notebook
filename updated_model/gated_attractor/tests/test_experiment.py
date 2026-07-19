@@ -89,13 +89,28 @@ class CuedSwitchingExperimentTests(unittest.TestCase):
         # conjunction units, the cue has no other route to influence real
         # (untaught) trials, so the default (gating-off) parameters are at
         # chance on this block by construction.
+        # gating_to_feature_gain/gating_to_relevant_feature_gain overridden
+        # from their class defaults: with the gate-target-aware plasticity
+        # pause active (model.py's pause_weight_learning, on whenever gating
+        # is on), the class defaults (0.4/0.0) regress this test (0.417,
+        # below chance) -- verified via this session's per-unit discrimination
+        # diagnostics that those defaults leave per-unit weight selectivity
+        # *worse* than gating off entirely, not better. 0.7/0.6 is this
+        # session's swept and n=20-validated replacement (see
+        # model_versions_config.py's '2cpr_gating_units' and model_outline.md
+        # section 11); this test scenario itself goes from 0.417 to 0.792 with
+        # them, seed 0.
         config = SwitchingExperimentConfig(
             seed=0,
             num_practice_blocks=2,
             practice_permutation_repeats=6,
             num_trials=24,
             switch_probs=(0.5,),
-            model_parameters=ModelParameters(number_of_gating_units=2),
+            model_parameters=ModelParameters(
+                number_of_gating_units=2,
+                gating_to_feature_gain=0.7,
+                gating_to_relevant_feature_gain=0.6,
+            ),
         )
         result = run_switching_experiment(config)
         real_trials = [t for t in result.trials if not t.is_practice]

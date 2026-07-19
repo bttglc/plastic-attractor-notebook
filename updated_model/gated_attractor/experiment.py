@@ -94,6 +94,30 @@ class EpochProtocol:
         default_factory=lambda: TimeWindow(50, 351)
     )
     response_search_start: int = 110
+    # extra steps after stimulus_window during which the currently-winning
+    # gate's target rows of W (its task's irrelevant dimension only, see
+    # gate_target_indices in task.py) still don't learn, on top of
+    # stimulus_window itself -- gate suppression is subtractive against a
+    # hard external floor, so it cannot visibly act while the stimulus is
+    # still driving the irrelevant feature at 1.0, and even once the
+    # stimulus turns off, suppression takes a handful of steps to actually
+    # pull that feature down (feature_self_weight=0.73 gives roughly a
+    # ~10-step time constant). Without this buffer, W's per-step Hebbian
+    # update (model.py's _update_plastic_weights, which runs every learning
+    # step) would keep binding the still-elevated irrelevant feature to
+    # whatever conjunction unit is active, exactly reproducing the
+    # non-selectivity gate_target_indices was meant to prevent -- just via
+    # the stimulus's external floor instead of the gate's own output
+    # weights. The relevant dimension's rows, and action/cue rows (which
+    # were never suppressible to begin with), keep learning every step
+    # throughout (see PlasticAttractor._update_plastic_weights) -- an
+    # earlier version paused the whole colour/shape block regardless of
+    # which one was relevant that trial, which needlessly discarded the
+    # relevant dimension's own stimulus_window learning too and measurably
+    # hurt accuracy. Only takes effect when gating is enabled (see
+    # run_epoch); with gating off this stays 0 and every row updates every
+    # step, matching Whyte et al.'s published, validated rule bit-for-bit.
+    plasticity_pause_buffer_steps: int = 10
 
     def __post_init__(self) -> None:
         if self.number_of_steps <= 0:
@@ -107,6 +131,21 @@ class EpochProtocol:
                 raise ValueError('Protocol windows must fit inside the epoch')
         if not 0 <= self.response_search_start < self.number_of_steps:
             raise ValueError('response_search_start must lie inside the epoch')
+        if self.plasticity_pause_buffer_steps < 0:
+            raise ValueError('plasticity_pause_buffer_steps cannot be negative')
+        if self.stimulus_window.stop + self.plasticity_pause_buffer_steps > self.number_of_steps:
+            raise ValueError('plasticity_pause_buffer_steps must fit inside the epoch')
+
+    @property
+    def plasticity_pause_window(self) -> TimeWindow:
+        """Steps where the winning gate's target rows are excluded from W's
+        per-step Hebbian update when gating is on: stimulus_window itself,
+        plus the post-stimulus buffer above."""
+
+        return TimeWindow(
+            self.stimulus_window.start,
+            self.stimulus_window.stop + self.plasticity_pause_buffer_steps,
+        )
 
 
 @dataclass(frozen=True)
@@ -223,6 +262,13 @@ def run_epoch(
         (protocol.number_of_steps, model.number_of_gating_units)
     )
 
+    # only pauses W's per-step update when gating is enabled -- with gating
+    # off there's no suppression mechanism competing with the stimulus's
+    # external floor in the first place, so the per-step update stays on
+    # throughout, matching Whyte et al.'s published rule bit-for-bit (see
+    # EpochProtocol.plasticity_pause_buffer_steps for why the window exists).
+    pause_weight_learning_enabled = model.number_of_gating_units > 0
+
     for time_step in range(protocol.number_of_steps):
         clamp_is_active = (
             perturbation is not None and perturbation.is_active(time_step)
@@ -242,6 +288,10 @@ def run_epoch(
             # and still rely on its self-sustaining recurrence, not a
             # continuously-reread cue channel, for the rest of the trial.
             cue_signal_active=protocol.stimulus_window.contains(time_step),
+            pause_weight_learning=(
+                pause_weight_learning_enabled
+                and protocol.plasticity_pause_window.contains(time_step)
+            ),
             learn=learn,
         )
         feature_history[time_step] = state.feature_activity

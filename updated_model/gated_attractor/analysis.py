@@ -20,7 +20,7 @@ from .experiment import (
     TrialResult,
     gate_winner_matches_task,
 )
-from .task import Feature
+from .task import Feature, Task
 
 
 @dataclass(frozen=True)
@@ -103,6 +103,25 @@ def summarize_behavior(trials: Iterable[TrialResult]) -> BehavioralSummary:
         congruent_reaction_time_in_steps=_mean_or_nan(congruent_times),
         incongruent_reaction_time_in_steps=_mean_or_nan(incongruent_times),
     )
+
+
+def accuracy_by_task(trials: Iterable[TrialResult]) -> dict[Task, float]:
+    """Accuracy split by which rule was active on the trial.
+
+    An aggregate accuracy number (summarize_behavior) can look fine while one
+    rule is carrying it and the other is near chance -- with only 4
+    conjunction units for 2 rules x 2 responses, that asymmetry is exactly
+    the kind of failure a single pooled number hides. NaN for a task with no
+    trials in the group.
+    """
+
+    trial_list = list(trials)
+    return {
+        task: _mean_or_nan(
+            [float(trial.correct) for trial in trial_list if trial.task == task]
+        )
+        for task in Task
+    }
 
 
 # EIGENVALUE HELPERS #
@@ -258,6 +277,17 @@ def incongruence_contrast_by_kind(
     }
 
 
+def accuracy_by_task_by_kind(
+    result: ExperimentResult,
+) -> dict[float, dict[Task, float]]:
+    """accuracy_by_task, further split by block kind (switch probability)."""
+
+    return {
+        kind: accuracy_by_task(trials)
+        for kind, trials in _real_trials_by_kind(result).items()
+    }
+
+
 # PERFORMANCE ACROSS BLOCKS #
 # ===================================================== #
 
@@ -347,6 +377,50 @@ def no_response_rate_by_block(result: ExperimentResult) -> np.ndarray:
 
 # colour/shape rows of W, in a fixed order every diagnostic below shares
 _COLOUR_SHAPE_FEATURES = (Feature.GREEN, Feature.BLUE, Feature.SQUARE, Feature.CIRCLE)
+
+
+def conjunction_unit_discrimination(weights: np.ndarray) -> np.ndarray:
+    """Per-conjunction-unit within-dimension weight gap: how well each unit,
+    on its own, tells green from blue and square from circle.
+
+    Shape (num_conjunction_units, 2), columns [colour_gap, shape_gap]. Earlier
+    ad hoc checks of this session's plasticity-pause fix looked only at the
+    *best* (max) gap across units, which can improve even while other units
+    stay collapsed or duplicated -- see model_outline.md's open questions.
+    Whyte et al.'s own criterion needs >=2 *simultaneously* well-differentiated
+    units (one per genuinely distinct S-R mapping; congruent pairs may share
+    one), so the full per-unit array, not its max, is what should be
+    inspected from now on.
+    """
+
+    green, blue, square, circle = (
+        weights[int(Feature.GREEN)], weights[int(Feature.BLUE)],
+        weights[int(Feature.SQUARE)], weights[int(Feature.CIRCLE)],
+    )
+    return np.stack([np.abs(green - blue), np.abs(square - circle)], axis=1)
+
+
+def conjunction_unit_discrimination_by_block(result: ExperimentResult) -> np.ndarray:
+    """conjunction_unit_discrimination for one snapshot (the block's last
+    trial) per block, mirroring colour_shape_row_norms_by_block. Shape
+    (num_blocks, num_conjunction_units, 2).
+    """
+
+    number_of_blocks = result.config.number_of_blocks
+    num_units = result.config.model_parameters.number_of_conjunction_units
+    gaps = np.full((number_of_blocks, num_units, 2), np.nan)
+
+    for block_index in range(number_of_blocks):
+        block_trials = [
+            trial for trial in result.trials if trial.block_index == block_index
+        ]
+        if not block_trials:
+            continue
+        gaps[block_index] = conjunction_unit_discrimination(
+            block_trials[-1].combined_weights
+        )
+
+    return gaps
 
 
 def colour_shape_row_norms_by_block(result: ExperimentResult) -> np.ndarray:

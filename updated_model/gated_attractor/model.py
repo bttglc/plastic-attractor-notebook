@@ -55,6 +55,19 @@ class ModelParameters:
     # period after the stimulus window ends needs more pull than the small
     # top-down conjunction term does.
     gating_to_feature_gain: float = 0.4
+    # fixed (not learned), multiplicative-gain pathway from a gate onto its
+    # OWN dimension's rows (colour gate -> colour rows, shape gate -> shape
+    # rows; task.py's gate_relevant_target_indices), on top of the plastic
+    # suppression above -- see step()'s gating_enhancement for why it scales
+    # the feature's own current activity rather than adding a flat constant.
+    # 0.0 (default) disables it, leaving the feature update bit-identical to
+    # before it existed. Exploratory: tests whether directly boosting the
+    # relevant dimension's sensitivity helps the network commit to the
+    # correct conjunction unit, since suppression alone is arithmetically
+    # capped against the stimulus's external floor (see gated-attractor
+    # model_outline.md's open questions) and the relevant feature's own
+    # settled activity is often well below ceiling.
+    gating_to_relevant_feature_gain: float = 0.0
     # gate weights blend a fast and a slow timescale, exactly like fast/slow
     # feature-conjunction weights above: fast tracks the teaching drive quickly
     # but is also what reward-gated real-block trials perturb trial by trial;
@@ -115,6 +128,8 @@ class ModelParameters:
             raise ValueError('number_of_gating_units must be 0 or 2 (one gate per rule)')
         if self.cue_to_gating_gain < 0 or self.gating_to_feature_gain < 0:
             raise ValueError('Gating gains cannot be negative')
+        if self.gating_to_relevant_feature_gain < 0:
+            raise ValueError('gating_to_relevant_feature_gain cannot be negative')
         if self.gating_fast_learning_rate < 0 or self.gating_slow_learning_rate < 0:
             raise ValueError('Gating learning rates cannot be negative')
         if self.gating_maximum_fast_weight <= 0 or self.gating_maximum_slow_weight <= 0:
@@ -168,6 +183,7 @@ class PlasticAttractor:
         self._cue_indices = np.array(vocabulary.all_cue_indices)
         self._suppressible_indices = np.array(vocabulary.suppressible_feature_indices)
         self._gate_target_indices = vocabulary.gate_target_indices
+        self._gate_relevant_target_indices = vocabulary.gate_relevant_target_indices
 
         # The experiment can provide one shared generator so initialization,
         # trial order, and neural noise all remain reproducible from one seed.
@@ -186,6 +202,7 @@ class PlasticAttractor:
         if self.number_of_gating_units > 0:
             self._gating_recurrent_weights = self._build_gating_connections()
             self._initialize_gating_weights()
+            self._gating_relevant_mask = self._build_gating_relevant_mask()
 
         # Every instruction or trial epoch starts from zero activity.
         self._feature_activity = np.zeros(self.number_of_feature_units)
@@ -318,6 +335,7 @@ class PlasticAttractor:
         clamp_conjunctions: bool = False,
         gate_external_input: np.ndarray | None = None,
         cue_signal_active: bool = False,
+        pause_weight_learning: bool = False,
         learn: bool | None = None,
     ) -> NetworkState:
         """Advance the neural and Hebbian equations by one time step."""
@@ -354,9 +372,40 @@ class PlasticAttractor:
             else 0.0
         )
 
+        # Fixed (not learned) excitatory counterpart of gating_inhibition: a
+        # winning gate boosts its OWN dimension's rows (see
+        # gating_to_relevant_feature_gain), rather than only suppressing the
+        # other one. Multiplicative in the feature's OWN current deviation
+        # from baseline (centered_features below), not a flat additive
+        # constant: a flat constant was tried first and applies equally to
+        # BOTH members of the relevant pair (e.g. green and blue alike, since
+        # the gate only knows the relevant DIMENSION, not which member is
+        # actually presented) -- that symmetrically inflates the *absent*
+        # member too, collapsing the within-pair discrimination it was meant
+        # to sharpen (confirmed empirically: conjunction_unit_discrimination's
+        # well-separated-unit count fell to ~0 at every enhancement gain > 0
+        # tried, regardless of inhibition strength). Multiplying by the
+        # feature's own centered activity instead amplifies whichever member
+        # is already driven up by the actual stimulus (near-zero deviation on
+        # the absent member gives near-zero enhancement), so it sharpens the
+        # existing presented-vs-absent contrast rather than blurring it. Zero
+        # whenever the gain is left at its default 0.0, so this stays a
+        # no-op unless explicitly enabled.
+        gating_enhancement = (
+            parameters.gating_to_relevant_feature_gain
+            * (
+                self._gating_relevant_mask
+                @ (self._gating_activity - parameters.baseline_activity)
+            )
+            * centered_features
+            if self.number_of_gating_units > 0
+            else 0.0
+        )
+
         # Feature units receive recurrent input, top-down input through W, the
         # stimulus/cue/teaching supplied by the experiment for this step, and
-        # (when enabled) subtractive inhibition from the gates.
+        # (when enabled) subtractive inhibition and multiplicative enhancement
+        # from the gates.
         next_features = _bounded_activity(
             parameters.baseline_activity
             + self._feature_recurrent_weights @ centered_features
@@ -364,6 +413,7 @@ class PlasticAttractor:
             * (self._combined_weights @ centered_conjunctions)
             + input_vector
             - gating_inhibition
+            + gating_enhancement
         )
 
         # Conjunction units receive recurrent input, bottom-up input through W
@@ -393,7 +443,13 @@ class PlasticAttractor:
 
         learning_is_on = self.learn if learn is None else learn
         if learning_is_on:
-            self._update_plastic_weights()
+            # pause_weight_learning only excludes the currently-winning
+            # gate's target rows (see _update_plastic_weights); the relevant
+            # dimension, action/cue rows, and the gate's own learning below
+            # are unaffected. The caller only ever sets it when gating is
+            # on, so with gating off every row updates every step exactly
+            # as in the published model.
+            self._update_plastic_weights(pause_weight_learning)
             # The trace only forms while the caller marks this step as inside
             # the cue's genuine presentation window (cue_signal_active; the
             # experiment ties this to stimulus_window, not to whether a forced
@@ -537,6 +593,19 @@ class PlasticAttractor:
             * np.ones((number_of_gates, number_of_gates))
         )
 
+    def _build_gating_relevant_mask(self) -> np.ndarray:
+        # fixed (not learned) 0/1 map, shape (num_features, num_gates): 1 at
+        # (feature_index, gate_index) wherever that gate's OWN dimension
+        # includes that feature (task.py's gate_relevant_target_indices) --
+        # the mirror image of _gating_output_mask's irrelevant-dimension
+        # targets. Used only to scale gating_to_relevant_feature_gain in
+        # step(); never touched by any learning rule.
+        mask = np.zeros((self.number_of_feature_units, self.number_of_gating_units))
+        for gate_index, target_indices in enumerate(self._gate_relevant_target_indices):
+            for feature_index in target_indices:
+                mask[feature_index, gate_index] = 1.0
+        return mask
+
     def _initialize_plastic_weights(self) -> None:
         # shape is (num_features, num_conjunction) = (10, 4): W drives the
         # top-down feature update as-is and the bottom-up conjunction update as
@@ -615,7 +684,7 @@ class PlasticAttractor:
 
         self._combine_gating_weights()
 
-    def _update_plastic_weights(self) -> None:
+    def _update_plastic_weights(self, pause_weight_learning: bool = False) -> None:
         parameters = self.parameters
 
         # The outer product gives one covariance-style Hebbian change per
@@ -628,6 +697,26 @@ class PlasticAttractor:
         # Cue rows never learn: same restriction as init, applied every step
         # so Hebbian drift can't move them off zero.
         change[self._cue_indices] = 0.0
+        # Only the rows the CURRENTLY-WINNING gate targets, and only during
+        # the caller's plasticity-pause window (see
+        # EpochProtocol.plasticity_pause_buffer_steps) -- not the whole
+        # colour/shape block. gate_target_indices already says which rows
+        # each gate may ever suppress (its task's irrelevant pair, never
+        # its own -- see task.py); reusing that same mask here excludes
+        # exactly the dimension this trial's winning gate is trying to
+        # suppress, while leaving the RELEVANT dimension's rows (and
+        # action/cue rows, which were never suppressible in the first
+        # place) learning every step. An earlier version of this pause
+        # excluded the entire suppressible block regardless of which gate
+        # was winning -- on every trial that also zeroed the relevant
+        # dimension's stimulus_window contribution for no reason, and
+        # measurably hurt accuracy instead of helping it.
+        if pause_weight_learning and self.number_of_gating_units > 0:
+            winning_gate = int(np.argmax(self._gating_activity))
+            irrelevant_rows = self._suppressible_indices[
+                self._gating_output_mask[:, winning_gate]
+            ]
+            change[irrelevant_rows] = 0.0
 
         # fast weights swing large and bound high; slow weights drift ~100x
         # slower and bound low.

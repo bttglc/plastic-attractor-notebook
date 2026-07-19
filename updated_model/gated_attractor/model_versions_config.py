@@ -38,12 +38,28 @@ model_versions = {
         # cue -> gate input gain, left at default: persistence through the
         # trial comes from gating_self_weight below, not from this
         cue_to_gating_gain=1.0,
-        # raised from the default 0.08: needs to outcompete the feature's
-        # own recurrent settling (feature_self_weight=0.73) over the
-        # ~250-step coasting period after the cue flash ends, not just
-        # nudge it. 0.08 (matched to conjunction_to_feature_gain) was tried
-        # first and left suppression unmeasurable
-        gating_to_feature_gain=0.4,
+        # re-tuned this session (was 0.4, tuned only against the pre-fix
+        # non-selective gating mechanism -- see model_outline.md section 11):
+        # with the gate-target-aware plasticity pause now active (excludes
+        # the currently-winning gate's target rows from W's Hebbian update
+        # during stimulus_window + a buffer), 0.4 left per-unit weight
+        # discrimination *worse* than gating off entirely (mean 0.10 of 4
+        # conjunction units well-separated, vs 1.20 with gating off, n=20
+        # seeds). A grid sweep over this gain and gating_to_relevant_
+        # feature_gain below found 0.7 the best-supported value: raising it
+        # further (0.8+) reliably got worse again despite higher structural
+        # selectivity, so this isn't "more suppression is always better"
+        gating_to_feature_gain=0.7,
+        # new this session (see model.py's gating_to_relevant_feature_gain):
+        # fixed, multiplicative excitatory pathway from a gate onto its own
+        # (relevant) dimension, on top of the suppression above. 0.6 chosen
+        # by the same sweep; validated at n=20 seeds together with the 0.7
+        # inhibition gain above: real-block accuracy 0.565 (vs 0.506 with
+        # gating on but these two gains at their old/default values, and
+        # 0.510 with gating on and the plasticity pause but pre-sweep
+        # gains), and well-separated conjunction units 2.00/4 on average
+        # (vs 1.20 with gating off and 0.10 with the pause at old gains)
+        gating_to_relevant_feature_gain=0.6,
         # fast/slow split, learning rates, weight caps and blends left at
         # the same values used for the main plastic weights above: fast
         # tracks each trial's reward-gated update, slow anchors the

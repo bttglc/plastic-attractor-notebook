@@ -99,6 +99,22 @@ class Vocabulary:
             for task in Task
         )
 
+    @property
+    def gate_relevant_target_indices(self) -> tuple[tuple[int, ...], ...]:
+        """Feature rows each rule's gate may enhance: its OWN task's pair,
+        the mirror image of gate_target_indices' irrelevant-pair targets.
+
+        Same fixed, hardcoded structure (colour gate first, shape gate
+        second) -- used to test whether directly boosting the relevant
+        dimension, on top of suppressing the irrelevant one, helps the
+        network commit to the correct conjunction unit.
+        """
+
+        return tuple(
+            tuple(int(feature) for feature in FEATURES_BY_TASK[task])
+            for task in Task
+        )
+
 
 def build_vocabulary(num_cues_per_rule: int = 2) -> Vocabulary:
     """Lay out cue and action positions after the four fixed colour/shape units.

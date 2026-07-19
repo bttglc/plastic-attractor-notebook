@@ -230,17 +230,21 @@ units end up with near-equal weights on both options of a competing pair
 (e.g. green and blue both high on the same unit), unable to discriminate
 within that dimension at all.
 
-**Tried and reverted (preserved in `wip_plasticity_pause_weight_mask/` for
-reference):** excluding the currently-winning gate's target rows from W's
-Hebbian update during `stimulus_window` + a ~10-step buffer (letting
-suppression's own ~10-step time constant catch up before learning resumes).
-Verified this measurably improved raw weight-level within-dimension
-discrimination (colour/shape gaps up to ~0.9-1.0 in several seeds, vs.
-near-zero everywhere before). But real-block accuracy did not improve
+**Tried, reverted, then merged (see section 11):** excluding the
+currently-winning gate's target rows from W's Hebbian update during
+`stimulus_window` + a ~10-step buffer (letting suppression's own ~10-step
+time constant catch up before learning resumes). Verified this measurably
+improved raw weight-level within-dimension discrimination *relative to
+blunter pause variants* (colour/shape gaps up to ~0.9-1.0 in several seeds,
+vs. near-zero everywhere before) -- but real-block accuracy did not improve
 (~0.51 vs ~0.495 baseline, 12 seeds, `practice_permutation_repeats=1`), and
 `test_practice_teaches_above_chance_behaviour` regressed. Two blunter
 variants (pausing the whole update; pausing the whole suppressible block
 regardless of which gate was winning) were tried first and were worse still.
+Section 11 found that this comparison -- against blunter pause variants --
+was the wrong baseline: checked properly against gating with *no* pause at
+all, this same mechanism left weight selectivity worse, not better, until
+combined with the gain re-tuning described there.
 
 **Why the disconnect might exist -- not yet distinguished:**
 - *Measurement gap in how "improvement" was checked.* Verification so far
@@ -288,3 +292,100 @@ artificial addition. Bigger structural change than a parameter tweak
 windows, and `stimulus_window`/`teaching_window`/gate-drive timing would
 need to follow) -- worth trying if the measurement-gap explanation above
 doesn't turn out to be the whole story.
+
+## 11. This session: plasticity pause merged, re-tuned with a relevant-
+feature enhancement pathway, and a corrected measurement practice
+
+Follow-up to (10). Four things changed, in this order.
+
+**Plasticity pause merged into the active package.** `wip_plasticity_
+pause_weight_mask/` (model.py's `pause_weight_learning` param and
+`_update_plastic_weights`' gate-target-aware row exclusion; experiment.py's
+`plasticity_pause_buffer_steps` / `plasticity_pause_window` and `run_epoch`
+wiring) is now just how `_update_plastic_weights` and `run_epoch` work --
+the snapshot folder is deleted, its content was byte-identical to the merge
+(diffed to confirm before deleting). Still only takes effect when gating is
+on; gating off stays bit-identical to Whyte et al.
+
+**Corrected measurement practice -- the actual point of (10)'s "measurement
+gap" worry.** `analysis.py` gained `conjunction_unit_discrimination`
+(per-unit colour/shape weight gap, shape `(num_conjunction_units, 2)`, not
+collapsed to a max) and `accuracy_by_task` / `accuracy_by_task_by_kind`
+(colour-rule vs shape-rule accuracy, not just pooled). Applying these,
+rather than the old max-gap check, to a straight pause-vs-no-pause
+comparison (n=20 seeds, `2cpr_gating_units`-style parameters) overturned
+(10)'s own framing: the pause's "improved... within-dimension
+discrimination" claim was only ever true *relative to blunter pause
+variants*. Against gating with no pause at all, the same pause left weight
+selectivity **worse**: mean well-separated conjunction units (both colour
+and shape gap > 0.3) fell from 1.20/4 (gating, no pause) to 0.10/4 (gating
++ pause, both at the old `gating_to_feature_gain=0.4`) -- pooled accuracy
+stayed flat either way (~0.51). **Going forward, check all
+`number_of_conjunction_units` units (or the full eigenvalue spectrum /
+per-task accuracy split), never a single best/max/pooled number, when
+judging whether a change helped selectivity or behaviour** -- this is now
+standard practice for this investigation, not a one-off fix.
+
+**New mechanism: fixed, multiplicative relevant-feature enhancement
+(`gating_to_relevant_feature_gain`, model.py).** Tests whether directly
+boosting the relevant dimension helps, on top of suppressing the irrelevant
+one -- motivated by (10)'s finding that suppression alone is arithmetically
+capped against the stimulus's external floor. Structurally the mirror image
+of the existing suppression pathway (`task.py`'s new
+`gate_relevant_target_indices`, a fixed 0/1 mask built once in
+`PlasticAttractor.__init__`, never learned). **First version (flat
+additive, matching gating_inhibition's structure) was actively harmful at
+every gain tried**: it adds the same constant to *both* members of the
+relevant pair (e.g. green and blue alike, since a gate only knows the
+relevant *dimension*, not which member is actually shown), which inflates
+the absent member as much as the presented one and collapses within-pair
+discrimination -- confirmed empirically (well-separated units fell to ~0
+the moment any additive gain > 0 was added, regardless of inhibition
+strength). **Fixed to multiplicative**: the enhancement term is
+`gain * gate_deviation * centered_features`, i.e. scaled by the feature's
+own current deviation from baseline, so it amplifies whichever member is
+already driven up by the real stimulus (the absent member's near-zero
+centered activity gives it near-zero enhancement) instead of blurring the
+pair together. Default `0.0` -- exact no-op, bit-identical to before this
+existed.
+
+**Re-tuned via grid + fine sweep (parallelised, `ProcessPoolExecutor`,
+scratch scripts, not committed).** Swept `gating_to_feature_gain` x
+`gating_to_relevant_feature_gain` (coarse 4x4 grid at n=8 seeds, then a
+finer 5x4 grid at n=10 around the best cell). Findings: raising inhibition
+alone (enhancement=0) monotonically raised well-separated-unit count
+(0.12 -> 0.25 -> 0.50 -> 0.50 of 4, gains 0.4/0.7/1.0/1.3) without moving
+accuracy; adding the (corrected, multiplicative) enhancement on top of a
+*moderate* inhibition raise was what actually moved accuracy, and not
+monotonically -- `gating_to_feature_gain=0.8` was reliably *worse* than
+0.7 despite comparable or better structural metrics, so this is a
+sweet-spot, not "more is better" in either gain. **Chosen and validated at
+n=20 seeds**: `gating_to_feature_gain=0.7`, `gating_to_relevant_feature_
+gain=0.6`.
+
+| | gating off | gating+pause, old gains (0.4/0.0) | gating+pause, tuned (0.7/0.6) |
+|---|---|---|---|
+| real-block accuracy | 0.506 +/- 0.018 | 0.510 +/- 0.006 | **0.565 +/- 0.028** |
+| colour / shape accuracy | 0.516 / 0.498 | 0.524 / 0.496 | 0.585 / 0.541 |
+| well-separated units (/4) | 1.20 | 0.10 | **2.00** |
+| amplifying eigenvalues (last block) | 2.60 | 2.15 | 2.55 |
+
+The tuned setting is the first configuration this whole investigation (all
+of sections 9-11) has found where accuracy, colour/shape balance, and
+per-unit structural selectivity all move together in the right direction
+at once, at the seed count this project trusts. `model_versions_config.py`'s
+`2cpr_gating_units` now uses these values (with the sweep numbers recorded
+inline); `test_practice_teaches_above_chance_behaviour` now sets them
+explicitly rather than relying on `ModelParameters`' conservative class
+defaults (which stay 0.4/0.0 -- backward-compatible, not re-tuned) and its
+own scenario goes from 0.417 (failing) to 0.792 with them, seed 0.
+
+**Not resolved / worth a future look:** why `gating_to_feature_gain=0.8`
+specifically breaks accuracy while 0.7 and 0.9 both work reasonably well
+wasn't chased down -- the sweep found the effect, not the mechanism. Colour
+accuracy still edges out shape accuracy in most conditions tried
+(0.585 vs 0.541 at the tuned setting); worth watching if it grows into a
+genuine asymmetry rather than sampling noise. Full launcher figures (20
+seeds, all diagnostics) haven't been regenerated with the new tuned values
+yet -- the numbers above come from focused scratch comparisons, not
+`launcher.py`'s output directory.
