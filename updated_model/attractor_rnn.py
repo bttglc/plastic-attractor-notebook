@@ -280,6 +280,10 @@ def plasticattractor_sim(num_trials, rnd_seed, switch_probs, practice_trials, TM
                 # or under-learns
                 if practice and t >= 50 and t <= 350:
                     stim_input[action_idx, t] = action_teach[correct, :]
+                    # 0.5 drive to the feature units for the dimension this
+                    # rule doesn't use, e.g. shape units while teaching the
+                    # colour rule - initially omitted by accident
+                    stim_input[feature_groups[1 - rule_idx], t] = 0.5
 
             stimulus[trl] = stim_input
 
