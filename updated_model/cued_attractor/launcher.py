@@ -64,7 +64,7 @@ n_seeds = 20
 
 # named parameter sets live in model_versions_config.py; pick any subset of
 # model_versions.keys() to run in this invocation
-active_versions = ['whyte_params_2cpr', '2cpr_Wslow_cap_high']
+active_versions = ['V2_2cpr_6conj', 'V1b_1cpr_6conj']
 
 # PARALLEL SEED EXECUTION #
 # ===================================================== #
@@ -151,12 +151,17 @@ def analyze_and_plot(version_name, results):
 
     # amplifying-eigenvalue count per block kind
     amp_by_kind = [amplifying_eigenvalue_mean_by_kind(r) for r in results]
-    mean_sat_by_kind, ster_sat_by_kind = mean_ster(stack_by_kind(amp_by_kind, kinds))
+    amp_by_kind_raw = stack_by_kind(amp_by_kind, kinds)
+    mean_sat_by_kind, ster_sat_by_kind = mean_ster(amp_by_kind_raw)
 
-    # pooled eigenvalue magnitudes per block kind (all seeds, trials, units)
+    # pooled eigenvalue magnitudes per block kind, kept per-seed (n_kinds, n_seeds)
+    # ragged object array for reuse, and also concatenated across seeds for the
+    # scatter plot below (all seeds, trials, units)
+    eigmag_by_kind_per_seed = np.empty((len(kinds), len(results)), dtype=object)
     eigmag_by_kind = []
-    for kind in kinds:
+    for k, kind in enumerate(kinds):
         per_kind = [eigenvalue_magnitudes_by_kind(r)[kind] for r in results]
+        eigmag_by_kind_per_seed[k, :] = per_kind
         eigmag_by_kind.append(np.concatenate(per_kind))
 
     # BEHAVIOURAL AGGREGATION #
@@ -165,21 +170,33 @@ def analyze_and_plot(version_name, results):
     switch = [switch_contrast_by_kind(r) for r in results]
     incong = [incongruence_contrast_by_kind(r) for r in results]
 
-    mean_switch_cost_rt, ster_switch_cost_rt = mean_ster(stack_by_kind(switch, kinds, 'rt_cost'))
-    mean_switch_cost_acc, ster_switch_cost_acc = mean_ster(stack_by_kind(switch, kinds, 'accuracy_cost'))
-    mean_incong_cost_rt, ster_incong_cost_rt = mean_ster(stack_by_kind(incong, kinds, 'rt_cost'))
-    mean_incong_cost_acc, ster_incong_cost_acc = mean_ster(stack_by_kind(incong, kinds, 'accuracy_cost'))
+    switch_rt_cost_raw = stack_by_kind(switch, kinds, 'rt_cost')
+    switch_accuracy_cost_raw = stack_by_kind(switch, kinds, 'accuracy_cost')
+    incong_rt_cost_raw = stack_by_kind(incong, kinds, 'rt_cost')
+    incong_accuracy_cost_raw = stack_by_kind(incong, kinds, 'accuracy_cost')
+    mean_switch_cost_rt, ster_switch_cost_rt = mean_ster(switch_rt_cost_raw)
+    mean_switch_cost_acc, ster_switch_cost_acc = mean_ster(switch_accuracy_cost_raw)
+    mean_incong_cost_rt, ster_incong_cost_rt = mean_ster(incong_rt_cost_raw)
+    mean_incong_cost_acc, ster_incong_cost_acc = mean_ster(incong_accuracy_cost_raw)
 
     # pure (non-differenced) RT and accuracy per condition. hard = switch /
     # incongruent, easy = repeat / congruent
-    mean_switch_rt, ster_switch_rt = mean_ster(stack_by_kind(switch, kinds, 'hard_rt'))
-    mean_repeat_rt, ster_repeat_rt = mean_ster(stack_by_kind(switch, kinds, 'easy_rt'))
-    mean_switch_acc, ster_switch_acc = mean_ster(stack_by_kind(switch, kinds, 'hard_accuracy'))
-    mean_repeat_acc, ster_repeat_acc = mean_ster(stack_by_kind(switch, kinds, 'easy_accuracy'))
-    mean_incongruent_rt, ster_incongruent_rt = mean_ster(stack_by_kind(incong, kinds, 'hard_rt'))
-    mean_congruent_rt, ster_congruent_rt = mean_ster(stack_by_kind(incong, kinds, 'easy_rt'))
-    mean_incongruent_acc, ster_incongruent_acc = mean_ster(stack_by_kind(incong, kinds, 'hard_accuracy'))
-    mean_congruent_acc, ster_congruent_acc = mean_ster(stack_by_kind(incong, kinds, 'easy_accuracy'))
+    switch_hard_rt_raw = stack_by_kind(switch, kinds, 'hard_rt')
+    switch_easy_rt_raw = stack_by_kind(switch, kinds, 'easy_rt')
+    switch_hard_accuracy_raw = stack_by_kind(switch, kinds, 'hard_accuracy')
+    switch_easy_accuracy_raw = stack_by_kind(switch, kinds, 'easy_accuracy')
+    incong_hard_rt_raw = stack_by_kind(incong, kinds, 'hard_rt')
+    incong_easy_rt_raw = stack_by_kind(incong, kinds, 'easy_rt')
+    incong_hard_accuracy_raw = stack_by_kind(incong, kinds, 'hard_accuracy')
+    incong_easy_accuracy_raw = stack_by_kind(incong, kinds, 'easy_accuracy')
+    mean_switch_rt, ster_switch_rt = mean_ster(switch_hard_rt_raw)
+    mean_repeat_rt, ster_repeat_rt = mean_ster(switch_easy_rt_raw)
+    mean_switch_acc, ster_switch_acc = mean_ster(switch_hard_accuracy_raw)
+    mean_repeat_acc, ster_repeat_acc = mean_ster(switch_easy_accuracy_raw)
+    mean_incongruent_rt, ster_incongruent_rt = mean_ster(incong_hard_rt_raw)
+    mean_congruent_rt, ster_congruent_rt = mean_ster(incong_easy_rt_raw)
+    mean_incongruent_acc, ster_incongruent_acc = mean_ster(incong_hard_accuracy_raw)
+    mean_congruent_acc, ster_congruent_acc = mean_ster(incong_easy_accuracy_raw)
 
     # PERFORMANCE EVOLUTION #
     # ===================================================== #
@@ -189,6 +206,55 @@ def analyze_and_plot(version_name, results):
     block_acc = np.array([acc for _, acc in perf], dtype=float)
     mean_block_rt, ster_block_rt = mean_ster(block_rt)
     mean_block_acc, ster_block_acc = mean_ster(block_acc)
+
+    # RAW DATA EXPORT #
+    # ===================================================== #
+
+    # final combined weights per seed, for reuse without rerunning simulations
+    W_by_seed = np.array([r.final_combined_weights for r in results])
+
+    np.savez(
+        os.path.join(output_dir, 'simulation_data.npz'),
+        kinds=np.array(kinds, dtype=float),
+        block_index=np.arange(0, block_rt.shape[1]),
+        prac_index=np.arange(0, practice_curves.shape[1]),
+        # raw per-seed arrays
+        practice_curves=practice_curves,
+        amp_by_kind_raw=amp_by_kind_raw,
+        eigmag_by_kind_per_seed=eigmag_by_kind_per_seed,
+        switch_rt_cost_raw=switch_rt_cost_raw,
+        switch_accuracy_cost_raw=switch_accuracy_cost_raw,
+        switch_hard_rt_raw=switch_hard_rt_raw,
+        switch_easy_rt_raw=switch_easy_rt_raw,
+        switch_hard_accuracy_raw=switch_hard_accuracy_raw,
+        switch_easy_accuracy_raw=switch_easy_accuracy_raw,
+        incong_rt_cost_raw=incong_rt_cost_raw,
+        incong_accuracy_cost_raw=incong_accuracy_cost_raw,
+        incong_hard_rt_raw=incong_hard_rt_raw,
+        incong_easy_rt_raw=incong_easy_rt_raw,
+        incong_hard_accuracy_raw=incong_hard_accuracy_raw,
+        incong_easy_accuracy_raw=incong_easy_accuracy_raw,
+        block_rt=block_rt,
+        block_acc=block_acc,
+        W_by_seed=W_by_seed,
+        # aggregated mean/standard-error arrays (as plotted)
+        mean_prac_sat_vals=mean_prac_sat_vals, ster_prac_sat_vals=ster_prac_sat_vals,
+        mean_sat_by_kind=mean_sat_by_kind, ster_sat_by_kind=ster_sat_by_kind,
+        mean_switch_cost_rt=mean_switch_cost_rt, ster_switch_cost_rt=ster_switch_cost_rt,
+        mean_switch_cost_acc=mean_switch_cost_acc, ster_switch_cost_acc=ster_switch_cost_acc,
+        mean_incong_cost_rt=mean_incong_cost_rt, ster_incong_cost_rt=ster_incong_cost_rt,
+        mean_incong_cost_acc=mean_incong_cost_acc, ster_incong_cost_acc=ster_incong_cost_acc,
+        mean_switch_rt=mean_switch_rt, ster_switch_rt=ster_switch_rt,
+        mean_repeat_rt=mean_repeat_rt, ster_repeat_rt=ster_repeat_rt,
+        mean_switch_acc=mean_switch_acc, ster_switch_acc=ster_switch_acc,
+        mean_repeat_acc=mean_repeat_acc, ster_repeat_acc=ster_repeat_acc,
+        mean_incongruent_rt=mean_incongruent_rt, ster_incongruent_rt=ster_incongruent_rt,
+        mean_congruent_rt=mean_congruent_rt, ster_congruent_rt=ster_congruent_rt,
+        mean_incongruent_acc=mean_incongruent_acc, ster_incongruent_acc=ster_incongruent_acc,
+        mean_congruent_acc=mean_congruent_acc, ster_congruent_acc=ster_congruent_acc,
+        mean_block_rt=mean_block_rt, ster_block_rt=ster_block_rt,
+        mean_block_acc=mean_block_acc, ster_block_acc=ster_block_acc,
+    )
 
     # PLOTS #
     # ===================================================== #
