@@ -6,7 +6,7 @@ analysis functions, averages across seeds, and writes the same figures.
 
 Run it from the updated_model folder:
 
-    python prototypes/launcher.py
+    python cued_attractor/launcher.py
 """
 
 import os
@@ -16,7 +16,7 @@ from concurrent.futures import ProcessPoolExecutor
 import matplotlib.pyplot as plt
 import numpy as np
 
-# make the sibling cued_attractor package importable regardless of the cwd
+# make the cued_attractor package (this file's parent dir) importable regardless of the cwd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cued_attractor import (

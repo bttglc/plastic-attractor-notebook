@@ -4,8 +4,9 @@ import unittest
 
 import numpy as np
 
-# make the sibling cued_attractor package importable regardless of the cwd
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# make the cued_attractor package importable regardless of the cwd (this file
+# sits one level deeper than the flat tests, inside the package folder)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from cued_attractor import ModelParameters, PlasticAttractor
 
