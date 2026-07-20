@@ -67,7 +67,11 @@ n_seeds = 20
 
 # named parameter sets live in model_versions_config.py; pick any subset of
 # model_versions.keys() to run in this invocation
-active_versions = ['2cpr_gating_units', '2cpr_slowW3', '2cpr_slowW2_cap01', '2cpr_slowW2_cap03', '2cpr_slowW2_cap04']
+active_versions = [
+    '2cpr_slowW3_g05_r04', '2cpr_slowW3_g05_r06', '2cpr_slowW3_g05_r08',
+    '2cpr_slowW3_g07_r04', '2cpr_slowW3_g07_r08',
+    '2cpr_slowW3_g09_r04', '2cpr_slowW3_g09_r06', '2cpr_slowW3_g09_r08',
+]
 
 # PARALLEL SEED EXECUTION #
 # ===================================================== #

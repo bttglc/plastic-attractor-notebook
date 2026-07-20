@@ -8,6 +8,9 @@ component dominate W nearly closes the gap (real-block accuracy 0.565 ->
 gating-specific, not a general routing-instability cure: it does nothing for
 `cued_attractor` (no gate) and actively hurts `gated_simple_attractor`
 (oracle suppression, already near ceiling under the old fast-dominant W).
+Section 16 confirms `slowW3`'s gating gains are still near-optimal under
+slow-dominant W and traces its remaining per-seed accuracy spread directly to
+per-seed routing-flip rate.
 
 ## 1. Lineage
 
@@ -484,7 +487,89 @@ count — done (100% flip under the old config, 11.9% under `slowW3`, matches
 section 13's "0/96" almost exactly). Finer cap sweep — done: accuracy
 plateaus by around max_fast_weight≈0.3, while routing stability keeps
 improving down to at least 0.1. Cross-package cap inversion — done:
-gating-specific, not a general fix. **Still open:** re-tuning
-`gating_to_feature_gain`/`gating_to_relevant_feature_gain` under
-slow-dominant W; correlating `slowW3`'s lower-accuracy seeds with their
-routing-flip rate.
+gating-specific, not a general fix. Both remaining items are closed in
+section 16 below.
+
+## 16. Gating-gain re-tuning under slow-dominant W, and per-seed accuracy vs. routing flip
+
+Closes section 15's two "still open" items.
+
+**Gain re-tuning.** `gating_to_feature_gain`/`gating_to_relevant_feature_gain`
+were tuned to 0.7/0.6 in section 11 against `2cpr_gating_units`' old
+fast-dominant W (`max_fast=1.0`/`max_slow=0.2`). A 3x3 grid around that point
+(`gating_to_feature_gain` in {0.5, 0.7, 0.9} x
+`gating_to_relevant_feature_gain` in {0.4, 0.6, 0.8}), run under `slowW3`'s cap (`max_fast=0.2`/
+`max_slow=1`), n=20 each, `practice_permutation_repeats=5`; the (0.7, 0.6)
+centre point is `slowW3` itself, not rerun:
+
+| gate gain \ enhance gain | 0.4 | 0.6 | 0.8 |
+|---|---|---|---|
+| **0.5** | 0.768±0.030 | 0.868±0.022 | 0.868±0.022 |
+| **0.7** | 0.770±0.032 | **0.881±0.019** (`slowW3`) | 0.884±0.018 |
+| **0.9** | 0.787±0.035 | 0.889±0.029 | 0.887±0.030 |
+
+(cell = real-block accuracy, mean±SE across 20 seeds)
+
+`gating_to_relevant_feature_gain=0.4` is uniformly bad regardless of
+inhibition gain (0.768-0.787, 2.2-3.0 combined SE below the matching 0.6-cell
+at each inhibition gain) —
+the multiplicative relevant-feature boost still has to be strong enough to
+latch the winning gate's dimension, same requirement as under the old
+fast-dominant W. Everything at enhance-gain >=0.6 is statistically tied
+(0.868-0.889, all within ~1 combined SE of `slowW3`'s 0.881±0.019, including
+the nominal best `g=0.9, r=0.6` at 0.889±0.029) — `slowW3`'s existing 0.7/0.6
+is still on the plateau, not off it. Unlike section 11's fast-dominant-W
+sweep, where `gating_to_feature_gain=0.8` reliably broke accuracy, inhibition
+gain doesn't matter much here once the enhancement gain clears 0.6 — the
+sharp non-monotonic sensitivity to `gating_to_feature_gain` was a
+fast-dominant-W-specific fragility, not a property of the gating mechanism
+itself.
+
+Full-session routing flip across the same grid:
+
+| gate gain \ enhance gain | 0.4 | 0.6 | 0.8 |
+|---|---|---|---|
+| **0.5** | 0.212±0.028 | 0.069±0.016 | 0.056±0.016 |
+| **0.7** | 0.406±0.037 | 0.119±0.026 (`slowW3`) | 0.131±0.026 |
+| **0.9** | 0.644±0.033 | 0.194±0.030 | 0.188±0.029 |
+
+Within the r=0.4 column, flip rises with inhibition gain and accuracy is
+flat and low — consistent with the earlier story (weak routing anchor, more
+suppression alone doesn't fix it). But within the accuracy-plateau region
+(enhance gain >=0.6), flip is *not* monotonic with accuracy: `g=0.5` has the
+lowest flip (0.056-0.069) yet slightly lower accuracy than `g=0.9`'s higher
+flip (0.188-0.194, accuracy 0.887-0.889). So routing-flip rate predicts
+accuracy well across the *bad* region (r=0.4) but not within the *good*
+region — a floor effect, not a dial that keeps paying off past a certain
+point (echoes section 15's cap-sweep plateau, now confirmed on the gain
+axis too).
+
+**Per-seed correlation, `slowW3` (0.7/0.6, n=20):** ranking seeds by real-
+block accuracy (min 0.734, max 1.000) against each seed's own routing
+instability:
+
+| metric | pearson r vs. accuracy |
+|---|---|
+| full-session routing flip | -0.417 |
+| cross-block routing drift (kind-pooled) | -0.638 |
+| within-block routing flip (real blocks) | -0.643 |
+
+All three negative and moderate-to-strong, confirming the mechanistic story
+directly at the seed level: `slowW3`'s residual accuracy spread is
+substantially explained by residual routing instability, not independent
+noise. The relationship isn't deterministic, though — several seeds with
+zero full-session flip still land at middling accuracy (0.826-0.891), so a
+perfectly stable *identity* over the whole session doesn't guarantee a
+*correct* one; a stimulus can stay latched onto the wrong conjunction unit
+throughout, consistent with section 13's mapping-vs-routing distinction.
+The within-block metric (pooling across all real trials, not just full-
+session persistence) correlates more strongly (r=-0.643) than the
+whole-session flip (r=-0.417), suggesting transient trial-to-trial
+disruption costs more accuracy than a single session-long identity change.
+
+**Answers to section 15's "still open" list:** gain re-tuning — done;
+`slowW3`'s 0.7/0.6 remains on the accuracy plateau, and the fast-dominant-W
+sensitivity to `gating_to_feature_gain=0.8` doesn't reproduce under
+slow-dominant W. Per-seed correlation — done; routing instability explains a
+real share of `slowW3`'s remaining accuracy variance (r up to -0.64) but not
+all of it.
