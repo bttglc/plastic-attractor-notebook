@@ -10,10 +10,12 @@ from cued_attractor import ModelParameters
 num_cues_per_rule = 2
 number_of_conjunction_units = 4
 
-# whyte_params conjunction_lateral_weight (-0.45) is tuned for 4 conjunction
-# units, where each unit is inhibited by 3 others. With more units, each one
-# is inhibited by more neighbours, so the per-connection weight must shrink
-# to keep total inhibitory drive comparable to the 4-unit baseline.
+# _build_conjunction_connections() returns self_weight*eye(N) + lateral_weight
+# * ones(N, N): the all-ones term adds lateral_weight to every entry,
+# including the diagonal, so the row sum is self_weight + N*lateral_weight.
+# whyte_params (-0.45, N=4) tunes that sum to 1.0 + 4*(-0.45) = -0.8. To keep
+# the same row sum (and hence the same population-mean-mode eigenvalue) at
+# other conjunction-unit counts, lateral_weight must scale as baseline_N / N.
 _baseline_conjunction_units = 4
 _baseline_conjunction_lateral_weight = -0.45
 
@@ -21,8 +23,8 @@ _baseline_conjunction_lateral_weight = -0.45
 def _rescaled_conjunction_lateral_weight(n_conjunction_units):
     return (
         _baseline_conjunction_lateral_weight
-        * (_baseline_conjunction_units - 1)
-        / (n_conjunction_units - 1)
+        * _baseline_conjunction_units
+        / n_conjunction_units
     )
 
 model_versions = {
