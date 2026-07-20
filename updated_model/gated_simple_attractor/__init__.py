@@ -8,11 +8,13 @@ The shortest complete workflow is::
 This package keeps published_model's task / model / experiment / analysis
 split. Unlike cued_attractor/gated_attractor, there are no cue units and no
 gating units: the trial harness itself drives only the task-relevant feature
-on every trial, leaving the irrelevant feature undriven so it settles near
-baseline through ordinary recurrent dynamics alone. This is an idealized,
-oracle-suppression control: if it achieves clean, high accuracy, the core
-attractor's capacity/dynamics aren't the bottleneck in gated_attractor, and
-the problem lives in the (learned, imperfect) suppression mechanism instead.
+on every trial, leaving the irrelevant feature undriven by default
+(ModelParameters.irrelevant_feature_drive) so it settles near baseline
+through ordinary recurrent dynamics alone. This is an idealized,
+oracle-suppression control at that default: if it achieves clean, high
+accuracy, the core attractor's capacity/dynamics aren't the bottleneck in
+gated_attractor, and the problem lives in the (learned, imperfect)
+suppression mechanism instead.
 """
 
 from .analysis import (

@@ -51,6 +51,14 @@ class ModelParameters:
     fast_weight_blend: float = 1.0
     slow_weight_blend: float = 1.0
 
+    # fraction of full stimulus drive (1.0) given to the irrelevant feature
+    # during stimulus_window, on top of the relevant feature's own full
+    # drive. 0.0 (default) reproduces this package's oracle-suppression
+    # premise bit-for-bit: the irrelevant feature gets no input at all.
+    # Consumed by experiment.py's _relevant_feature_vector, not by the
+    # network dynamics below.
+    irrelevant_feature_drive: float = 0.0
+
     def __post_init__(self) -> None:
         if self.number_of_conjunction_units <= 0:
             raise ValueError('number_of_conjunction_units must be positive')
@@ -62,6 +70,8 @@ class ModelParameters:
             raise ValueError('Learning rates cannot be negative')
         if self.maximum_fast_weight <= 0 or self.maximum_slow_weight <= 0:
             raise ValueError('Maximum weights must be positive')
+        if not 0.0 <= self.irrelevant_feature_drive <= 1.0:
+            raise ValueError('irrelevant_feature_drive must lie between 0 and 1')
 
 
 @dataclass(frozen=True)

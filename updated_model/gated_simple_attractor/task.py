@@ -106,8 +106,9 @@ class Stimulus:
     def irrelevant_feature(self, task: Task) -> Feature:
         """Select the colour or shape the current rule ignores.
 
-        Never driven by the experiment; used only by analysis.py to check
-        that it actually settles near baseline.
+        Undriven by default (ModelParameters.irrelevant_feature_drive=0.0);
+        used by experiment.py's _relevant_feature_vector to place that drive
+        and by analysis.py to check what it settles at.
         """
 
         if task == Task.COLOR:
@@ -139,10 +140,12 @@ def is_congruent(stimulus: Stimulus) -> bool:
 
     Congruent stimuli (green square, blue circle) get the same action from both
     rules; incongruent stimuli (green circle, blue square) get opposite actions.
-    Kept for comparability with the sibling packages, but since the irrelevant
-    feature is never shown here, congruency has no route to affect a trial's
-    dynamics -- switch_contrast_by_kind/incongruence_contrast_by_kind should
-    come out null, which is the expected negative control, not a bug.
+    Kept for comparability with the sibling packages. At the default
+    ModelParameters.irrelevant_feature_drive=0.0 the irrelevant feature is
+    never shown, so congruency has no route to affect a trial's dynamics --
+    switch_contrast_by_kind/incongruence_contrast_by_kind should come out
+    null, the expected negative control, not a bug. Raising that drive above
+    zero gives congruency a route in, so a real effect becomes possible.
     """
 
     return (stimulus.color == Feature.GREEN) == (stimulus.shape == Feature.SQUARE)

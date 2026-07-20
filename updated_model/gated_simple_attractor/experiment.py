@@ -10,8 +10,9 @@ teaching drive on the response units), then runs real blocks where the rule
 varies trial by trial. Unlike cued_attractor/gated_attractor, the rule is
 never signalled by a cue or suppressed by a learned gate: on every trial the
 experiment itself drives only the task-relevant feature, leaving the
-irrelevant one undriven so it settles near baseline through ordinary
-recurrent dynamics alone (an oracle/idealized suppression -- see
+irrelevant one undriven by default so it settles near baseline through
+ordinary recurrent dynamics alone (an oracle/idealized suppression --
+ModelParameters.irrelevant_feature_drive raises this off zero; see
 _relevant_feature_vector).
 """
 
@@ -454,17 +455,22 @@ class ExperimentResult:
 
 
 def _relevant_feature_vector(
-    vocabulary: Vocabulary, task: Task, stimulus: Stimulus
+    vocabulary: Vocabulary,
+    task: Task,
+    stimulus: Stimulus,
+    irrelevant_feature_drive: float,
 ) -> np.ndarray:
-    """Drive only the task-relevant feature; the irrelevant one gets no input
-    at all and settles near baseline through ordinary recurrent dynamics --
-    see analysis.py's relevant_irrelevant_activity_by_kind. No cue: the rule
+    """Drive the task-relevant feature at full strength and the irrelevant
+    one at irrelevant_feature_drive (0.0 by default, reproducing the
+    original oracle suppression bit-for-bit) -- see
+    analysis.py's relevant_irrelevant_activity_by_kind. No cue: the rule
     is signalled by which feature is driven, decided by the trial harness,
     never inferred by the network.
     """
 
     vector = np.zeros(vocabulary.number_of_features)
     vector[stimulus.relevant_feature(task)] = 1.0
+    vector[stimulus.irrelevant_feature(task)] = irrelevant_feature_drive
     return vector
 
 
@@ -485,6 +491,7 @@ def _trial_epoch(
     apply_teaching: bool,
     protocol: EpochProtocol,
     vocabulary: Vocabulary,
+    irrelevant_feature_drive: float,
 ) -> np.ndarray:
     """Build the full external-input schedule (steps x features) for one trial."""
 
@@ -495,12 +502,12 @@ def _trial_epoch(
     inputs[: protocol.stimulus_window.start] = -1.0
     inputs[protocol.response_window.stop :] = -1.0
 
-    # only the relevant feature, presented alone -- the irrelevant one is
-    # never driven, on instruction and real trials alike (see
-    # _relevant_feature_vector).
+    # the relevant feature at full strength, plus irrelevant_feature_drive on
+    # the irrelevant one (0.0 by default, i.e. never driven), on instruction
+    # and real trials alike (see _relevant_feature_vector).
     stimulus_window = protocol.stimulus_window
     inputs[stimulus_window.start : stimulus_window.stop] = _relevant_feature_vector(
-        vocabulary, planned.task, planned.stimulus
+        vocabulary, planned.task, planned.stimulus, irrelevant_feature_drive
     )
 
     # instruction trials teach the response across the settling window,
@@ -558,7 +565,13 @@ def _run_trial(
 ) -> TrialResult:
     trajectory = run_epoch(
         model,
-        _trial_epoch(planned, apply_teaching, config.protocol, vocabulary),
+        _trial_epoch(
+            planned,
+            apply_teaching,
+            config.protocol,
+            vocabulary,
+            config.model_parameters.irrelevant_feature_drive,
+        ),
         config.protocol,
         perturbation=config.perturbation,
         learn=config.learn_during_trials,

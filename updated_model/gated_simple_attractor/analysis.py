@@ -225,10 +225,10 @@ def switch_contrast_by_kind(result: ExperimentResult) -> dict[float, Contrast]:
     """Rule-switch vs rule-repeat contrast per block kind (hard = RULE_SWITCH,
     easy = RULE_REPEAT). With no cue, every non-first trial falls into exactly
     one of these two groups. Kept for comparability with the sibling packages
-    and as a negative control: since the irrelevant feature is never shown
-    here, a trial's dynamics depend only on which feature is currently driven,
-    never on the previous trial's rule -- this should come out near zero,
-    which is the expected result, not a bug.
+    and as a negative control: since the irrelevant feature is undriven by
+    default here, a trial's dynamics depend only on which feature is currently
+    driven, never on the previous trial's rule -- this should come out near
+    zero, which is the expected result, not a bug.
     """
 
     return {
@@ -246,9 +246,11 @@ def incongruence_contrast_by_kind(
 ) -> dict[float, Contrast]:
     """Incongruent vs congruent contrast per block kind.
 
-    Kept for comparability and as a negative control -- see
-    switch_contrast_by_kind's docstring; the same reasoning applies since the
-    unshown feature never touches a trial's dynamics.
+    Kept for comparability with the sibling packages. Null by construction
+    only at the default ModelParameters.irrelevant_feature_drive=0.0 -- see
+    switch_contrast_by_kind's docstring and task.py's is_congruent; raising
+    that drive above zero lets the irrelevant feature reach the network, so
+    this can show a real effect.
     """
 
     return {
@@ -367,8 +369,9 @@ def relevant_irrelevant_activity_by_kind(
     """Mean settled (relevant, irrelevant) feature activity over each block
     kind's real trials, averaged over response_window's last
     _SETTLED_ACTIVITY_WINDOW_STEPS steps. The direct empirical check on this
-    package's premise: irrelevant should sit near baseline_activity (0.175)
-    since it is never driven, unlike relevant.
+    package's premise: at the default ModelParameters.irrelevant_feature_drive
+    =0.0, irrelevant should sit near baseline_activity (0.175) since it is
+    never driven; a nonzero drive should raise it measurably above that.
     """
 
     window = result.config.protocol.response_window
