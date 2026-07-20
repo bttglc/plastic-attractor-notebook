@@ -269,7 +269,12 @@ combined with the gain re-tuning described there.
   parameter regime (4 conjunction units, current gains) rather than
   something gating specifically worsens, since a weak/noisy settled signal
   would make the 98%-of-peak response measure sensitive to small,
-  non-meaningful fluctuations regardless of which fix is tried.
+  non-meaningful fluctuations regardless of which fix is tried. **Superseded
+  by section 12 for the gating-on case**: under the retuned gains
+  (section 11), settled relevant activity is no longer modest -- it
+  saturates to ~1.0 (irrelevant to ~0.0) on nearly every real trial. This
+  bullet's "~0.3-0.5, not near ceiling" only describes the pre-retuning
+  regime (enhancement gain 0.0).
 - *Capacity is tight by construction.* 4 conjunction units for 2 rules x 2
   responses (with only congruent pairs able to legitimately share a unit)
   leaves very little redundancy -- Whyte et al.'s own >=2-amplifying-
@@ -386,6 +391,130 @@ wasn't chased down -- the sweep found the effect, not the mechanism. Colour
 accuracy still edges out shape accuracy in most conditions tried
 (0.585 vs 0.541 at the tuned setting); worth watching if it grows into a
 genuine asymmetry rather than sampling noise. Full launcher figures (20
-seeds, all diagnostics) haven't been regenerated with the new tuned values
-yet -- the numbers above come from focused scratch comparisons, not
-`launcher.py`'s output directory.
+seeds, all diagnostics) have since been regenerated in `output/
+2cpr_gating_units/` with the tuned values -- see section 12 for what they
+show.
+
+## 12. Relevant-feature saturation is now near-ceiling; the accuracy gap
+is downstream of the feature layer
+
+`output/2cpr_gating_units/relevant_irrelevant_activity_by_kind.png` (20
+seeds, regenerated with section 11's tuned gains) shows settled relevant
+activity at ~0.99-1.00 and irrelevant at ~0.001-0.009, flat across all four
+switch-probability conditions -- not the ~0.3-0.5 "modest" values section
+10 describes. Checked against `simulation_data.npz`: relevant activity is
+exactly 1.0 in 79 of 80 seed x kind cells; irrelevant is below 0.01 in all
+80. This is not a measurement bug (`relevant_irrelevant_activity_by_kind`'s
+window indexes directly into the full-trial `feature_history`, which
+already spans the whole epoch, so the settled-window slice lines up with
+`response_window` correctly) -- it is a real, mechanistic consequence of
+section 11's retuning.
+
+**Mechanism.** Once a gate has latched (own recurrence
+`gating_self_weight=1.6`, deviation from baseline ~0.825), the relevant
+feature's own update (`model.py::step`) picks up an effective self-gain of
+`feature_self_weight (0.73) + gating_to_relevant_feature_gain (0.6) x
+gate_deviation (~0.825) ~= 1.22`. That is >1: a supra-unity feedback loop on
+the relevant feature's own recurrence, so once triggered it runs to the
+`clip(0, 1)` ceiling by construction -- the same latching principle already
+used deliberately for `gating_self_weight` itself (see 'Gate persistence' in
+section 4), just not previously identified as also present in the feature
+layer once the enhancement pathway was added. The irrelevant feature has no
+such boost; with external input at 0 throughout `response_window`, sustained
+suppression (`gating_to_feature_gain=0.7`) has the full window to decay it to
+floor.
+
+**What this sharpens, not resolves.** Section 10's "selectivity in W isn't
+the same as correct competition outcomes" bullet is now the leading
+explanation, and more starkly than when it was written: the feature layer is
+essentially noise-free (colour/shape separation ~0.99 vs ~0.005) at the same
+gains that only reach ~0.565 real-block accuracy (section 11's table). With
+the input to the conjunction layer this clean, remaining errors have to
+originate in the conjunction-unit competition or the W action-row mapping,
+not in relevant/irrelevant feature discrimination -- narrowing where to look
+next, not explaining the gap yet.
+
+## 13. Where the accuracy gap actually lives: unstable stimulus-to-
+conjunction-unit routing, not weak competition or an ambiguous mapping
+
+Follow-up to section 12. A scratch diagnostic (12 seeds, tuned
+`2cpr_gating_units` params, not committed) recorded, per real trial: which
+conjunction unit wins settled winner-take-all (same window convention as
+`relevant_irrelevant_activity_by_kind`: last 20 steps of `response_window`),
+that unit's own W action-row differential (`W[action_1, winner] -
+W[action_2, winner]`), and whether that differential favours
+`trial.correct_response`. 4608 real trials total.
+
+**Winner-take-all is never close.** The winning unit's share of total
+settled conjunction activity averages 0.992 (minimum 0.502 across all 4608
+trials) -- the conjunction competition resolves to a near-total winner
+essentially every trial. Not a source of ambiguity.
+
+**Trial correctness is almost perfectly predicted by whether the winning
+unit's own action-row favours the right response**: 98.1% correct when it
+does (n=2764), 2.9% correct when it doesn't (n=1844) -- and that 60/40 split
+matches these seeds' pooled real-block accuracy (0.600) almost exactly. The
+gap is essentially all explained by which unit wins, not by anything
+downstream (response measurement, congruency, switch cost).
+
+**The wrong-favouring trials aren't near-ties either.** `|W[action_1,
+winner] - W[action_2, winner]|` has the same distribution whether the
+winner favours the correct or the wrong action (median 1.115 both); 92.9%
+of wrong-favouring trials have a gap >=0.3. Each unit's action mapping is
+confidently, strongly learned -- it is simply sometimes the wrong unit
+that's winning for a given stimulus, not an undecided unit giving a weak
+signal.
+
+**Which unit wins for a given stimulus is not stable.** Grouped by (seed,
+stimulus): 0 of 96 combinations keep the same winner_unit across every real
+block in that seed's run -- the assignment drifts block to block. Within a
+single block, 55.3% of (seed, block, stimulus) groups show *both*
+correct- and wrong-favouring outcomes across that block's repeated
+presentations of the same physical stimulus: routing can flip trial to
+trial within one block, not just across blocks.
+
+**Reading:** unstable stimulus-to-conjunction-unit binding under continuous
+plasticity, not weak competition or an ambiguous action mapping.
+`learn_during_trials=True` keeps the fast Hebbian rule (`fast_learning_
+rate=0.02`, no decay) running every step of every real trial (section 5),
+so nothing holds a stimulus's routing fixed once instruction ends -- a
+stimulus currently routed to a correctly-mapped unit can be displaced onto
+a different unit (already strongly, and correctly for some *other*
+stimulus, wired to the opposite action) by ordinary trial-to-trial Hebbian
+drift, and every such displacement produces a confidently wrong response
+rather than a degraded one. This gives section 10's "capacity is tight by
+construction" bullet direct empirical support and sharpens it: the
+bottleneck isn't static under-provisioning of the 4 units, it's that
+nothing anchors *which* stimulus each unit currently serves once real
+blocks start, and 4 units for (up to) 4 distinct S-R mappings leaves no
+spare unit to absorb a displacement without disrupting something else.
+
+**Not yet checked:** whether this instability is also present with gating
+off (a general property of the tight 4-unit Whyte et al. architecture,
+rather than something the gating retuning introduced or worsened); whether
+it correlates with trial position within a block (settling toward a stable
+assignment vs. continuing to drift); and whether `slow_weights` (capped at
+0.2, meant to anchor the instruction-taught mapping against real-block
+drift -- section 5) is failing to anchor here or is simply outweighed by
+the faster component's ongoing per-trial updates.
+
+**Promoted from scratch to a tracked diagnostic, across all three
+`updated_model` packages.** The two metrics behind this section --
+`conjunction_routing_flip_rate_by_block` (within-block: do repeated
+presentations of the same (task, stimulus) settle on the same conjunction
+unit?) and `conjunction_routing_drift_by_kind` (cross-block: same question,
+pooled across the ~2 real blocks sharing a switch probability) -- are now
+in `analysis.py`, wired into `launcher.py`'s per-seed collection, npz export
+(`routing_flip_by_block`, `routing_drift_raw`, and their aggregated
+`mean_*`/`ster_*` pairs), and a new `conjunction_routing_stability.png`
+(within-block flip rate by block index, left; cross-block drift rate by
+switch probability, right) -- in `gated_attractor`, `gated_simple_attractor`,
+and `cued_attractor` alike, using the same settled-window convention
+(`_SETTLED_ACTIVITY_WINDOW_STEPS = 20`) in every package. This directly
+answers the first "not yet checked" item above once run: `cued_attractor`
+has no gating at all, and `gated_simple_attractor` is the no-cue,
+oracle-suppression control, so comparing their `conjunction_routing_
+stability.png` against `gated_attractor`'s tells us whether this drift is a
+base-architecture property (4 tightly-shared conjunction units under
+continuous Hebbian learning) or something specific to gating. Not yet run
+at a trustworthy seed count in any package as of this writing.
