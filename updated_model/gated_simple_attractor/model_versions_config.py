@@ -24,6 +24,24 @@ model_versions = {
         maximum_fast_weight=1.0, maximum_slow_weight=0.2,
         fast_weight_blend=1.0, slow_weight_blend=1.0,
     ),
+    # baseline with fast/slow weight caps inverted (1.0/0.2 -> 0.2/1.0),
+    # mirroring gated_attractor's 2cpr_slowW3: tests whether making the slow
+    # plastic-weight component dominate W is a general fix for tight-capacity
+    # routing instability or specific to gating (section 14's "not yet
+    # checked"). This package has no gate to route through -- oracle
+    # suppression handles the irrelevant dimension directly -- so this
+    # isolates the cap-inversion effect from any gating interaction.
+    'cap_inverted': ModelParameters(
+        number_of_conjunction_units=number_of_conjunction_units,
+        conjunction_lateral_weight=-0.45, conjunction_self_weight=1.0,
+        conjunction_to_feature_gain=0.08,
+        feature_lateral_weight=-0.28, feature_self_weight=0.73,
+        feature_to_conjunction_gain=0.04,
+        baseline_activity=0.175,
+        fast_learning_rate=0.02, slow_learning_rate=0.0002,
+        maximum_fast_weight=0.2, maximum_slow_weight=1,
+        fast_weight_blend=1.0, slow_weight_blend=1.0,
+    ),
     # same as baseline but with a partial (non-oracle) irrelevant-feature
     # drive, so congruency has a route into a trial's dynamics. 0.30 chosen
     # from a coarse scratch sweep (n=6 then n=8 seeds, 0.15-0.7): the only

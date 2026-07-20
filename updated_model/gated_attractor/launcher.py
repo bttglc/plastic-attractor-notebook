@@ -26,6 +26,7 @@ from gated_attractor import (
     block_kinds,
     conjunction_routing_drift_by_kind,
     conjunction_routing_flip_rate_by_block,
+    conjunction_routing_flip_rate_full_session,
     eigenvalue_magnitudes_by_kind,
     gate_accuracy_by_block,
     incongruence_contrast_by_kind,
@@ -66,7 +67,7 @@ n_seeds = 20
 
 # named parameter sets live in model_versions_config.py; pick any subset of
 # model_versions.keys() to run in this invocation
-active_versions = ['2cpr_slowW3']
+active_versions = ['2cpr_gating_units', '2cpr_slowW3', '2cpr_slowW2_cap01', '2cpr_slowW2_cap03', '2cpr_slowW2_cap04']
 
 # PARALLEL SEED EXECUTION #
 # ===================================================== #
@@ -240,6 +241,16 @@ def analyze_and_plot(version_name, results):
     routing_drift_raw = stack_by_kind(routing_drift, kinds)
     mean_routing_drift_by_kind, ster_routing_drift_by_kind = mean_ster(routing_drift_raw)
 
+    # whole-session version of the same question, pooling all 8 real blocks
+    # instead of just the ~2 sharing a switch-probability kind -- directly
+    # comparable to model_outline.md section 13's "0/96" headline number
+    routing_flip_full_session_raw = np.array(
+        [conjunction_routing_flip_rate_full_session(r) for r in results], dtype=float
+    )
+    mean_routing_flip_full_session, ster_routing_flip_full_session = mean_ster(
+        routing_flip_full_session_raw
+    )
+
     # RAW DATA EXPORT #
     # ===================================================== #
 
@@ -275,6 +286,7 @@ def analyze_and_plot(version_name, results):
         irrelevant_activity_raw=irrelevant_activity_raw,
         routing_flip_by_block=routing_flip_by_block,
         routing_drift_raw=routing_drift_raw,
+        routing_flip_full_session_raw=routing_flip_full_session_raw,
         W_by_seed=W_by_seed,
         # aggregated mean/standard-error arrays (as plotted)
         mean_prac_sat_vals=mean_prac_sat_vals, ster_prac_sat_vals=ster_prac_sat_vals,
@@ -299,6 +311,7 @@ def analyze_and_plot(version_name, results):
         mean_irrelevant_activity=mean_irrelevant_activity, ster_irrelevant_activity=ster_irrelevant_activity,
         mean_routing_flip_by_block=mean_routing_flip_by_block, ster_routing_flip_by_block=ster_routing_flip_by_block,
         mean_routing_drift_by_kind=mean_routing_drift_by_kind, ster_routing_drift_by_kind=ster_routing_drift_by_kind,
+        mean_routing_flip_full_session=mean_routing_flip_full_session, ster_routing_flip_full_session=ster_routing_flip_full_session,
     )
 
     # PLOTS #

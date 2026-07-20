@@ -4,7 +4,10 @@ Reference for this package. Gate non-selectivity is fixed (section 9);
 section 13 traced the accuracy ceiling to unstable stimulus-to-conjunction-
 unit routing, and section 14 confirms it — making the slow plastic-weight
 component dominate W nearly closes the gap (real-block accuracy 0.565 ->
-0.881, `2cpr_slowW3`, current best version).
+0.881, `2cpr_slowW3`, current best version). Section 15 finds this fix is
+gating-specific, not a general routing-instability cure: it does nothing for
+`cued_attractor` (no gate) and actively hurts `gated_simple_attractor`
+(oracle suppression, already near ceiling under the old fast-dominant W).
 
 ## 1. Lineage
 
@@ -365,3 +368,123 @@ the same cap inversion on `cued_attractor` (no gating) and
 dominance is a general fix for tight-capacity routing instability or
 gating-specific; whether `slowW3`'s lower-accuracy seeds (0.73-0.87) are
 exactly the seeds with elevated routing flip rate.
+
+## 15. Whole-session stability, a finer cap sweep, and cross-package generalization
+
+Runs section 14's three "not yet checked" items together: a new
+`conjunction_routing_flip_rate_full_session` (`analysis.py`, all three
+`updated_model` packages) pools every real trial across all 8 blocks rather
+than the ~2 sharing a switch-probability kind; a finer `gated_attractor` cap
+sweep locates the accuracy/stability plateau; and the same 1.0/0.2 ->
+0.2/1.0 fast/slow cap inversion is applied to `cued_attractor` and
+`gated_simple_attractor` to test whether slow-weight dominance is a general
+routing fix or specific to gating. All runs n=20 seeds via `launcher.py`.
+`cued_attractor`/`gated_simple_attractor` had `practice_permutation_repeats`
+left at 1 (vs. `gated_attractor`'s 5) going into this session — an
+inconsistency, not a deliberate choice, fixed to 5 for every run below and
+in both launchers going forward.
+
+**Whole-session stability, directly comparable to section 13's "0/96":**
+under `2cpr_gating_units` (old fast-dominant W), all 20/20 seeds have
+full-session flip rate exactly 1.000 — literally no (task, stimulus)
+identity anywhere stays on the same conjunction unit for an entire session.
+Under `2cpr_slowW3`, mean flip rate drops to 0.119±0.026, and 7/20 seeds
+reach perfect whole-session stability (0.000). Sharper than, and consistent
+with, section 13's original "0/96" scratch estimate.
+
+**Finer cap sweep** (`2cpr_slowW2_cap01/03/04`: `max_fast_weight` =
+0.1/0.3/0.4, `max_slow_weight=1` throughout, alongside the existing 0.2
+(`slowW3`) and 0.5 (`slowW2`) points):
+
+| max_fast_weight | 1.0 (`gating_units`) | 0.5 (`slowW2`) | 0.4 | 0.3 | 0.2 (`slowW3`) | 0.1 |
+|---|---|---|---|---|---|---|
+| real-block accuracy | 0.561±0.025 | 0.842±0.025 | 0.858±0.024 | 0.870±0.021 | **0.881±0.019** | 0.872±0.024 |
+| congruent accuracy | 0.547-0.621 | - | 0.951-0.960 | 0.976-0.982 | 0.979-0.991 | 0.957-0.972 |
+| incongruent accuracy | 0.517-0.607 | - | 0.736-0.781 | 0.749-0.775 | 0.757-0.790 | 0.770-0.797 |
+| full-session routing flip | 1.000±0.000 | n/a* | 0.237±0.026 | 0.150±0.026 | 0.119±0.026 | 0.100±0.029 |
+
+*`slowW2` predates `conjunction_routing_flip_rate_full_session` and wasn't
+rerun this session, so only its (pre-existing) accuracy is available.
+
+Accuracy plateaus across the whole 0.1-0.5 range — every point from 0.842 to
+0.881 sits within about 1 SE of every other, so `slowW3`'s 0.2 isn't a sharp
+optimum, just the best-performing point sampled on a flat top. Full-session
+routing flip rate, however, keeps falling monotonically as the fast cap
+drops further (23.7% -> 15.0% -> 11.9% -> 10.0%) — the same "structural
+stability keeps improving after accuracy stops" pattern section 14 found
+between `slowW3` and `slowW4` at the high-dominance end, now confirmed at
+the low end too. Congruent/incongruent accuracy is essentially identical
+across 0.1-0.4, so this is a genuine plateau, not fragile tuning around one
+lucky value.
+
+**Cross-package generalization — does the cap inversion transfer?** Same
+1.0/0.2 -> 0.2/1.0 inversion applied to each sibling package's baseline
+config (`whyte_params_2cpr` in `cued_attractor`; `baseline` in
+`gated_simple_attractor`), n=20, `practice_permutation_repeats=5`:
+
+| | `cued_attractor` baseline | `cued_attractor` cap-inverted | `gated_simple_attractor` baseline | `gated_simple_attractor` cap-inverted |
+|---|---|---|---|---|
+| real-block accuracy | 0.512±0.026 | 0.535±0.023 | **0.952±0.032** | 0.491±0.048 |
+| congruent accuracy | 0.515-0.531 | 0.542-0.562 | 0.949-0.957 | 0.465-0.506 |
+| incongruent accuracy | 0.481-0.517 | 0.496-0.528 | 0.946-0.954 | 0.478-0.501 |
+| full-session routing flip | 0.463±0.096 | 0.688±0.045 | 0.450±0.049 | 0.163±0.034 |
+| no-response rate | 0.000 | 0.000 | 0.000 | 0.000 |
+
+Neither sibling package replicates `gated_attractor`'s result, and in
+opposite ways. `cued_attractor` (no gate at all) stays at chance either way —
+congruent and incongruent accuracy are indistinguishable in both configs, and
+cap-inversion makes full-session routing *less* stable (46.3% -> 68.8%), not
+more. `gated_simple_attractor` (oracle suppression: the irrelevant feature is
+externally forced off, not learned) is the sharper result: its existing
+fast-dominant baseline is already near ceiling (0.952) despite a routing
+flip rate (0.450) that would have crushed `gated_attractor`'s old
+fast-dominant config — apparently harmless here, since oracle suppression
+removes the interference that made routing identity matter in the first
+place. Cap-inversion *lowers* its flip rate further (to 0.163) but collapses
+accuracy to chance (0.491), congruent and incongruent alike (no-response
+rate rules out a response-generation failure).
+
+**Reading:** section 14's fix rescues a specific failure mode — a gate that
+suppresses the irrelevant dimension well enough to create a real routing
+target, but not perfectly, so continuous fast Hebbian learning can knock a
+stimulus off that target. Without a gate at all (`cued_attractor`) there is
+no clean target to anchor onto in the first place. With oracle suppression
+(`gated_simple_attractor`) there was never a target to lose — and slow-
+dominant W's slower plasticity apparently tracks the real-block rule-switch
+structure worse than the fast component did, once there's no gating noise
+for it to be anchoring against. Not a general routing-instability cure —
+gating-specific.
+
+**Repeats-for-teaching sweep**, on `cued_attractor`'s cap-inverted config
+(same config as above; `practice_permutation_repeats` = 1/3/5/10, n=20
+each — 1 was this package's pre-existing, apparently-accidental default):
+
+| repeats | 1 | 3 | 5 | 10 |
+|---|---|---|---|---|
+| real-block accuracy | 0.493±0.036 | 0.482±0.033 | 0.535±0.023 | 0.510±0.010 |
+| congruent accuracy | 0.509-0.535 | 0.481-0.511 | 0.542-0.562 | 0.516-0.532 |
+| incongruent accuracy | 0.453-0.472 | 0.449-0.478 | 0.496-0.528 | 0.490-0.505 |
+| full-session routing flip | 0.637±0.047 | 0.625±0.051 | 0.688±0.045 | 0.575±0.071 |
+
+Flat within noise across a 10x range of instruction repetition — no
+monotonic trend in accuracy, congruency, or routing stability.
+`cued_attractor`'s poor performance under cap-inversion isn't an
+under-teaching artifact; the same near-chance, no-congruency-effect pattern
+holds from 1 repeat to 10, so the low `practice_permutation_repeats` this
+package had been left at wasn't masking a real effect above.
+
+**Caveat:** `2cpr_slowW2` (the pre-existing 0.5 cap point) and
+`irrelevant_leak_0.30` (`gated_simple_attractor`) weren't rerun this
+session; the former is missing the new full-session metric, and the latter
+is still at the old `practice_permutation_repeats=1` and isn't directly
+comparable to the `baseline`/`cap_inverted` numbers above.
+
+**Answers to section 14's "not yet checked" list:** whole-session stability
+count — done (100% flip under the old config, 11.9% under `slowW3`, matches
+section 13's "0/96" almost exactly). Finer cap sweep — done: accuracy
+plateaus by around max_fast_weight≈0.3, while routing stability keeps
+improving down to at least 0.1. Cross-package cap inversion — done:
+gating-specific, not a general fix. **Still open:** re-tuning
+`gating_to_feature_gain`/`gating_to_relevant_feature_gain` under
+slow-dominant W; correlating `slowW3`'s lower-accuracy seeds with their
+routing-flip rate.

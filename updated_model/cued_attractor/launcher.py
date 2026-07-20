@@ -29,6 +29,7 @@ from cued_attractor import (
     build_vocabulary,
     conjunction_routing_drift_by_kind,
     conjunction_routing_flip_rate_by_block,
+    conjunction_routing_flip_rate_full_session,
     eigenvalue_magnitudes_by_kind,
     incongruence_contrast_by_kind,
     no_response_rate_by_block,
@@ -50,7 +51,7 @@ base_output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'outp
 # trials per real block (multiple of 4); practice runs the full (cue x
 # stimulus) permutation practice_permutation_repeats times per block
 num_trials = 48
-practice_permutation_repeats = 1
+practice_permutation_repeats = 5
 
 # per-block rule-switch probability, one entry per real block
 switch_probs = (0.125, 0.25, 0.5, 0.75) * 2
@@ -67,7 +68,7 @@ n_seeds = 20
 
 # named parameter sets live in model_versions_config.py; pick any subset of
 # model_versions.keys() to run in this invocation
-active_versions = ['2cpr_Wslow_cap_high2']
+active_versions = ['whyte_params_2cpr', '2cpr_Wslow_cap_high2']
 
 # PARALLEL SEED EXECUTION #
 # ===================================================== #
@@ -232,6 +233,17 @@ def analyze_and_plot(version_name, results):
     routing_drift_raw = stack_by_kind(routing_drift, kinds)
     mean_routing_drift_by_kind, ster_routing_drift_by_kind = mean_ster(routing_drift_raw)
 
+    # whole-session version of the same question, pooling all 8 real blocks
+    # instead of just the ~2 sharing a switch-probability kind -- directly
+    # comparable to gated_attractor's model_outline.md section 13 "0/96"
+    # headline number
+    routing_flip_full_session_raw = np.array(
+        [conjunction_routing_flip_rate_full_session(r) for r in results], dtype=float
+    )
+    mean_routing_flip_full_session, ster_routing_flip_full_session = mean_ster(
+        routing_flip_full_session_raw
+    )
+
     # RAW DATA EXPORT #
     # ===================================================== #
 
@@ -264,6 +276,7 @@ def analyze_and_plot(version_name, results):
         no_response_by_block=no_response_by_block,
         routing_flip_by_block=routing_flip_by_block,
         routing_drift_raw=routing_drift_raw,
+        routing_flip_full_session_raw=routing_flip_full_session_raw,
         W_by_seed=W_by_seed,
         # aggregated mean/standard-error arrays (as plotted)
         mean_prac_sat_vals=mean_prac_sat_vals, ster_prac_sat_vals=ster_prac_sat_vals,
@@ -285,6 +298,7 @@ def analyze_and_plot(version_name, results):
         mean_no_response_by_block=mean_no_response_by_block, ster_no_response_by_block=ster_no_response_by_block,
         mean_routing_flip_by_block=mean_routing_flip_by_block, ster_routing_flip_by_block=ster_routing_flip_by_block,
         mean_routing_drift_by_kind=mean_routing_drift_by_kind, ster_routing_drift_by_kind=ster_routing_drift_by_kind,
+        mean_routing_flip_full_session=mean_routing_flip_full_session, ster_routing_flip_full_session=ster_routing_flip_full_session,
     )
 
     # PLOTS #

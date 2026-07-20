@@ -560,3 +560,19 @@ def conjunction_routing_drift_by_kind(result: ExperimentResult) -> dict[float, f
         kind: _routing_flip_rate(trials, window)
         for kind, trials in _real_trials_by_kind(result).items()
     }
+
+
+def conjunction_routing_flip_rate_full_session(result: ExperimentResult) -> float:
+    """Whole-session routing stability: fraction of (task, stimulus)
+    identities whose settled winner-take-all conjunction unit isn't the same
+    across every real trial, pooling all real blocks together (not just the
+    ~2 sharing a switch-probability kind, as conjunction_routing_drift_by_kind
+    does). NaN if no identity repeats. Directly comparable to
+    model_outline.md section 13's whole-session "0/96" headline number.
+    """
+
+    window = result.config.protocol.response_window
+    all_real_trials = [
+        trial for trials in _real_trials_by_kind(result).values() for trial in trials
+    ]
+    return _routing_flip_rate(all_real_trials, window)
