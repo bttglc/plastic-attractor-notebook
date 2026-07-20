@@ -24,7 +24,8 @@ from gated_attractor import (
     SwitchingExperimentConfig,
     amplifying_eigenvalue_mean_by_kind,
     block_kinds,
-    colour_shape_row_norms_by_block,
+    conjunction_routing_drift_by_kind,
+    conjunction_routing_flip_rate_by_block,
     eigenvalue_magnitudes_by_kind,
     gate_accuracy_by_block,
     incongruence_contrast_by_kind,
@@ -48,7 +49,7 @@ base_output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'outp
 # trials per real block (multiple of 4); practice runs the full (cue x
 # stimulus) permutation practice_permutation_repeats times per block
 num_trials = 48
-practice_permutation_repeats = 1
+practice_permutation_repeats = 5
 
 # per-block rule-switch probability, one entry per real block
 switch_probs = (0.125, 0.25, 0.5, 0.75) * 2
@@ -65,7 +66,7 @@ n_seeds = 20
 
 # named parameter sets live in model_versions_config.py; pick any subset of
 # model_versions.keys() to run in this invocation
-active_versions = ['2cpr_gating_units']
+active_versions = ['2cpr_slowW4']
 
 # PARALLEL SEED EXECUTION #
 # ===================================================== #
@@ -220,16 +221,24 @@ def analyze_and_plot(version_name, results):
     )
     mean_no_response_by_block, ster_no_response_by_block = mean_ster(no_response_by_block)
 
-    row_norms_by_block = np.array(
-        [colour_shape_row_norms_by_block(r) for r in results], dtype=float
-    )
-    mean_row_norms_by_block, ster_row_norms_by_block = mean_ster(row_norms_by_block)
-
     activity = [relevant_irrelevant_activity_by_kind(r) for r in results]
     relevant_activity_raw = stack_by_kind(activity, kinds, 'relevant')
     irrelevant_activity_raw = stack_by_kind(activity, kinds, 'irrelevant')
     mean_relevant_activity, ster_relevant_activity = mean_ster(relevant_activity_raw)
     mean_irrelevant_activity, ster_irrelevant_activity = mean_ster(irrelevant_activity_raw)
+
+    # does the settled winner-take-all conjunction unit for a given (task,
+    # stimulus) stay the same trial to trial (within a block) and block to
+    # block (within a kind), or does routing drift under continuous
+    # real-block learning? see model_outline.md section 13
+    routing_flip_by_block = np.array(
+        [conjunction_routing_flip_rate_by_block(r) for r in results], dtype=float
+    )
+    mean_routing_flip_by_block, ster_routing_flip_by_block = mean_ster(routing_flip_by_block)
+
+    routing_drift = [conjunction_routing_drift_by_kind(r) for r in results]
+    routing_drift_raw = stack_by_kind(routing_drift, kinds)
+    mean_routing_drift_by_kind, ster_routing_drift_by_kind = mean_ster(routing_drift_raw)
 
     # RAW DATA EXPORT #
     # ===================================================== #
@@ -262,9 +271,10 @@ def analyze_and_plot(version_name, results):
         block_acc=block_acc,
         gate_acc_by_block=gate_acc_by_block,
         no_response_by_block=no_response_by_block,
-        row_norms_by_block=row_norms_by_block,
         relevant_activity_raw=relevant_activity_raw,
         irrelevant_activity_raw=irrelevant_activity_raw,
+        routing_flip_by_block=routing_flip_by_block,
+        routing_drift_raw=routing_drift_raw,
         W_by_seed=W_by_seed,
         # aggregated mean/standard-error arrays (as plotted)
         mean_prac_sat_vals=mean_prac_sat_vals, ster_prac_sat_vals=ster_prac_sat_vals,
@@ -285,9 +295,10 @@ def analyze_and_plot(version_name, results):
         mean_block_acc=mean_block_acc, ster_block_acc=ster_block_acc,
         mean_gate_acc_by_block=mean_gate_acc_by_block, ster_gate_acc_by_block=ster_gate_acc_by_block,
         mean_no_response_by_block=mean_no_response_by_block, ster_no_response_by_block=ster_no_response_by_block,
-        mean_row_norms_by_block=mean_row_norms_by_block, ster_row_norms_by_block=ster_row_norms_by_block,
         mean_relevant_activity=mean_relevant_activity, ster_relevant_activity=ster_relevant_activity,
         mean_irrelevant_activity=mean_irrelevant_activity, ster_irrelevant_activity=ster_irrelevant_activity,
+        mean_routing_flip_by_block=mean_routing_flip_by_block, ster_routing_flip_by_block=ster_routing_flip_by_block,
+        mean_routing_drift_by_kind=mean_routing_drift_by_kind, ster_routing_drift_by_kind=ster_routing_drift_by_kind,
     )
 
     # PLOTS #
@@ -419,11 +430,9 @@ def analyze_and_plot(version_name, results):
     fig.savefig(os.path.join(output_dir, 'performance_evolution_by_block.png'), format='png', dpi=1200)
 
     # root-cause diagnostics per block index, same instruction/real boundaries:
-    # is the gate itself ever wrong, does the network fail to respond at all
-    # (vs. respond incorrectly), and how do the colour/shape W rows evolve
-    # fixed order colour_shape_row_norms_by_block guarantees: green, blue, square, circle
-    row_labels = ['Green', 'Blue', 'Square', 'Circle']
-    fig, ax = plt.subplots(1, 3, figsize=(12, 4))
+    # is the gate itself ever wrong, and does the network fail to respond at
+    # all (vs. respond incorrectly)
+    fig, ax = plt.subplots(1, 2, figsize=(8, 4))
     ax[0].errorbar(block_index, mean_gate_acc_by_block, yerr=ster_gate_acc_by_block, color='black', capsize=3, linestyle='-', marker='o')
     ax[0].axvline(num_practice_blocks - .5, color='grey', linestyle='--')
     ax[0].axvline(real_blocks_start - .5, color='grey', linestyle='--')
@@ -436,20 +445,26 @@ def analyze_and_plot(version_name, results):
     ax[1].set_xlabel('Block')
     ax[1].set_ylabel('No-response rate')
     ax[1].set_xticks(block_index)
-    for feature_index, label in enumerate(row_labels):
-        ax[2].errorbar(
-            block_index, mean_row_norms_by_block[:, feature_index],
-            yerr=ster_row_norms_by_block[:, feature_index],
-            capsize=3, linestyle='-', marker='o', label=label,
-        )
-    ax[2].axvline(num_practice_blocks - .5, color='grey', linestyle='--')
-    ax[2].axvline(real_blocks_start - .5, color='grey', linestyle='--')
-    ax[2].set_xlabel('Block')
-    ax[2].set_ylabel('W row norm (colour/shape)')
-    ax[2].set_xticks(block_index)
-    ax[2].legend()
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, 'diagnostics_by_block.png'), format='png', dpi=1200)
+
+    # conjunction-unit routing stability: does the same physical (task,
+    # stimulus) keep winning settled winner-take-all on the same conjunction
+    # unit, within a block (left) and across the blocks sharing a switch
+    # probability (right)? see model_outline.md section 13 -- real-block
+    # learning never turns off, so nothing anchors this by construction
+    fig, ax = plt.subplots(1, 2, figsize=(8, 4))
+    ax[0].errorbar(block_index, mean_routing_flip_by_block, yerr=ster_routing_flip_by_block, color='black', capsize=3, linestyle='-', marker='o')
+    ax[0].axvline(num_practice_blocks - .5, color='grey', linestyle='--')
+    ax[0].axvline(real_blocks_start - .5, color='grey', linestyle='--')
+    ax[0].set_xlabel('Block')
+    ax[0].set_ylabel('Within-block routing flip rate')
+    ax[0].set_xticks(block_index)
+    ax[1].errorbar(kinds, mean_routing_drift_by_kind, yerr=ster_routing_drift_by_kind, color='black', capsize=3, linestyle='-', marker='o')
+    ax[1].set_xlabel('Switch probability (block kind)')
+    ax[1].set_ylabel('Cross-block routing drift rate')
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, 'conjunction_routing_stability.png'), format='png', dpi=1200)
 
     plt.close('all')
 
