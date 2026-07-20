@@ -286,3 +286,103 @@ def performance_by_block(
         )
 
     return reaction_time, accuracy
+
+
+# RESPONSE DIAGNOSTICS #
+# ===================================================== #
+
+def no_response_rate_by_block(result: ExperimentResult) -> np.ndarray:
+    """Fraction of trials per block with no measurable response
+    (chosen_response is None), mirroring performance_by_block's convention.
+    """
+
+    number_of_blocks = result.config.number_of_blocks
+    rate = np.full(number_of_blocks, np.nan)
+
+    for block_index in range(number_of_blocks):
+        block_trials = [
+            trial for trial in result.trials if trial.block_index == block_index
+        ]
+        if not block_trials:
+            continue
+        rate[block_index] = _mean_or_nan(
+            [float(trial.chosen_response is None) for trial in block_trials]
+        )
+
+    return rate
+
+
+# ROUTING DIAGNOSTICS #
+# ===================================================== #
+
+# how many steps at the end of response_window count as "settled", not the
+# transient right after the stimulus/cue turn off (matches the sibling
+# packages' relevant_irrelevant_activity_by_kind convention)
+_SETTLED_ACTIVITY_WINDOW_STEPS = 20
+
+
+def _settled_conjunction_winner(trial: TrialResult, window) -> int:
+    """Which conjunction unit holds the most settled activity, averaged over
+    the last _SETTLED_ACTIVITY_WINDOW_STEPS of response_window."""
+
+    start = max(window.start, window.stop - _SETTLED_ACTIVITY_WINDOW_STEPS)
+    settled = trial.trajectory.conjunction_activity[start : window.stop]
+    return int(np.argmax(settled.mean(axis=0)))
+
+
+def _routing_flip_rate(trials: Iterable[TrialResult], window) -> float:
+    """Fraction of (task, stimulus) identities repeated at least twice among
+    trials whose settled winner-take-all conjunction unit isn't the same on
+    every occurrence. NaN if no identity repeats."""
+
+    winners_by_stimulus: dict = {}
+    for trial in trials:
+        key = (trial.task, trial.stimulus)
+        winners_by_stimulus.setdefault(key, []).append(
+            _settled_conjunction_winner(trial, window)
+        )
+    repeated = [winners for winners in winners_by_stimulus.values() if len(winners) >= 2]
+    return _mean_or_nan([float(len(set(winners)) > 1) for winners in repeated])
+
+
+def conjunction_routing_flip_rate_by_block(result: ExperimentResult) -> np.ndarray:
+    """Within-block routing stability: for each block, the fraction of
+    repeated same-stimulus presentations whose settled winner-take-all
+    conjunction unit changes from one presentation to another.
+
+    NaN for a block with no stimulus repeated at least twice, mirroring
+    performance_by_block's block-index convention. gated_attractor's
+    model_outline.md (section 13) found the winning unit for a fixed
+    physical stimulus is not guaranteed to stay the same once real-block
+    learning stays on -- tracked here for comparison across updated_model
+    variants, including this cue-only, no-gating baseline.
+    """
+
+    number_of_blocks = result.config.number_of_blocks
+    window = result.config.protocol.response_window
+    rate = np.full(number_of_blocks, np.nan)
+
+    for block_index in range(number_of_blocks):
+        block_trials = [
+            trial for trial in result.trials if trial.block_index == block_index
+        ]
+        if block_trials:
+            rate[block_index] = _routing_flip_rate(block_trials, window)
+
+    return rate
+
+
+def conjunction_routing_drift_by_kind(result: ExperimentResult) -> dict[float, float]:
+    """Cross-block routing stability: for each block kind (switch
+    probability), the fraction of (task, stimulus) identities whose settled
+    winner-take-all conjunction unit isn't the same across every real trial
+    of that kind (typically 2 blocks). NaN for a kind with no stimulus
+    repeated at least twice. Complements conjunction_routing_flip_rate_by_
+    block, which asks the same question within a single block instead.
+    """
+
+    window = result.config.protocol.response_window
+    return {
+        kind: _routing_flip_rate(trials, window)
+        for kind, trials in _real_trials_by_kind(result).items()
+    }
