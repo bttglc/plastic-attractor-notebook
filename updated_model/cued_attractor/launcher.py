@@ -67,7 +67,7 @@ n_seeds = 20
 
 # named parameter sets live in model_versions_config.py; pick any subset of
 # model_versions.keys() to run in this invocation
-active_versions = ['V1b_1cpr_6conj', 'V3_2cpr_8conj', 'V2_2cpr_6conj']
+active_versions = ['2cpr_Wslow_cap_high2']
 
 # PARALLEL SEED EXECUTION #
 # ===================================================== #
