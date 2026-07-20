@@ -79,12 +79,14 @@ SWITCH_PROBS = (0.0, 0.125, 0.25, 0.5, 0.75) * 2
 
 
 def run_condition_cued(seed: int):
-    config = CuedConfig(seed=seed, model_parameters=cued_model_versions[CUED_VERSION], switch_probs=SWITCH_PROBS)
+    config = CuedConfig(seed=seed, model_parameters=cued_model_versions[CUED_VERSION], switch_probs=SWITCH_PROBS,
+                        practice_permutation_repeats=5)
     return run_cued_experiment(config)
 
 
 def run_condition_gated(seed: int):
-    config = GatedConfig(seed=seed, model_parameters=gated_model_versions[GATED_VERSION], switch_probs=SWITCH_PROBS)
+    config = GatedConfig(seed=seed, model_parameters=gated_model_versions[GATED_VERSION], switch_probs=SWITCH_PROBS,
+                         practice_permutation_repeats=5)
     return run_gated_experiment(config)
 
 
