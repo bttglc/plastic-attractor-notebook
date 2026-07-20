@@ -34,9 +34,12 @@ Defined in `model.py`'s `PlasticAttractor`:
 - **Conjunction units** (4 default): global winner-take-all
   (`conjunction_lateral_weight=-0.45`, `conjunction_self_weight=1.00`),
   coupled to feature units via the plastic weight matrix W.
-- **Gating units** (0 or 2, one per rule): optional feedforward inhibitory
-  interneurons, driven by the cue, meant to suppress the task-irrelevant
-  dimension. 0 disables them, reproducing Whyte et al. bit-for-bit. Also
+- **Gating units** (0 or 2, one per rule): optional feedforward interneurons,
+  driven by the cue. 0 disables them, reproducing Whyte et al. bit-for-bit.
+  Two pathways onto feature units: plastic suppression of the task-irrelevant
+  dimension (`gating_to_feature_gain`, section 5) and a fixed, not-learned
+  multiplicative enhancement of the gate's OWN (relevant) dimension
+  (`gating_to_relevant_feature_gain`, section 11). Gates are themselves
   winner-take-all (`gating_lateral_weight=-0.45`, `gating_self_weight=1.6` —
   see 'gate persistence' below).
 
@@ -55,10 +58,11 @@ Defined in `model.py`'s `PlasticAttractor`:
 ## 4. Dynamics (`model.py::PlasticAttractor.step`)
 
 ```
-gating_inhibition = gating_to_feature_gain * (gating_output_weights @ (gate_activity - baseline))   # 0 if gating off
+gating_inhibition = gating_to_feature_gain * (gating_output_weights @ (gate_activity - baseline))     # 0 if gating off; plastic, irrelevant dimension
+gating_enhancement = gating_to_relevant_feature_gain * (gating_relevant_mask @ (gate_activity - baseline))   # 0 if gating off; fixed, relevant dimension
 next_features      = clip(baseline + feature_recurrent @ centered_features
                            + conjunction_to_feature_gain * (W @ centered_conjunctions)
-                           + external_input - gating_inhibition, 0, 1)
+                           + external_input - gating_inhibition + gating_enhancement, 0, 1)
 next_conjunctions  = clip(baseline + conjunction_recurrent @ centered_conjunctions
                            + feature_to_conjunction_gain * (W.T @ centered_features)
                            + noise, 0, 1)
