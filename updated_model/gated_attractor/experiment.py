@@ -149,21 +149,67 @@ class EpochProtocol:
 
 
 @dataclass(frozen=True)
-class ConjunctionClamp:
-    """Force every conjunction unit to maximum activity in a time window."""
+class TMSPerturbation:
+    """Clamp one or more populations within a time window."""
 
     window: TimeWindow
+    target_conjunction_units: bool = False
+    target_gating_units: bool = False
+    clamp_value: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not (self.target_conjunction_units or self.target_gating_units):
+            raise ValueError('At least one target population must be enabled')
 
     @classmethod
-    def between(cls, start: int, stop: int) -> 'ConjunctionClamp':
-        return cls(TimeWindow(start, stop))
+    def conjunction_only(
+        cls,
+        start: int,
+        stop: int,
+        *,
+        clamp_value: float = 0.0,
+    ) -> 'TMSPerturbation':
+        return cls(
+            TimeWindow(start, stop),
+            target_conjunction_units=True,
+            clamp_value=clamp_value,
+        )
+
+    @classmethod
+    def gating_only(
+        cls,
+        start: int,
+        stop: int,
+        *,
+        clamp_value: float = 0.0,
+    ) -> 'TMSPerturbation':
+        return cls(
+            TimeWindow(start, stop),
+            target_gating_units=True,
+            clamp_value=clamp_value,
+        )
+
+    @classmethod
+    def both(
+        cls,
+        start: int,
+        stop: int,
+        *,
+        clamp_value: float = 0.0,
+    ) -> 'TMSPerturbation':
+        return cls(
+            TimeWindow(start, stop),
+            target_conjunction_units=True,
+            target_gating_units=True,
+            clamp_value=clamp_value,
+        )
 
     @classmethod
     def ending_with_stimulus(
         cls,
         duration_in_steps: int,
         protocol: 'EpochProtocol | None' = None,
-    ) -> 'ConjunctionClamp':
+    ) -> 'TMSPerturbation':
         if duration_in_steps <= 0:
             raise ValueError('duration_in_steps must be positive')
 
@@ -172,7 +218,7 @@ class ConjunctionClamp:
         start = stop - duration_in_steps
         if start < 0:
             raise ValueError('Clamp duration begins before the epoch')
-        return cls.between(start, stop)
+        return cls.conjunction_only(start, stop)
 
     def is_active(self, time_step: int) -> bool:
         return self.window.contains(time_step)
@@ -182,10 +228,14 @@ class ConjunctionClamp:
         return self.window.duration
 
 
+# Backward-compatible name for older imports and any existing helper code.
+ConjunctionClamp = TMSPerturbation
+
+
 def author_tms_pulse(
     labeled_dose: int,
     protocol: 'EpochProtocol | None' = None,
-) -> 'ConjunctionClamp | None':
+) -> 'TMSPerturbation | None':
     """Translate the flat script's inclusive TMS dose label into a clamp.
 
     The original program clamps the conjunction units over t in [TMS_start, 100]
@@ -197,7 +247,7 @@ def author_tms_pulse(
         raise ValueError('labeled_dose cannot be negative')
     if labeled_dose == 0:
         return None
-    return ConjunctionClamp.ending_with_stimulus(
+    return TMSPerturbation.ending_with_stimulus(
         duration_in_steps=labeled_dose + 1,
         protocol=protocol,
     )
@@ -221,7 +271,7 @@ def run_epoch(
     inputs: np.ndarray,
     protocol: EpochProtocol,
     *,
-    perturbation: ConjunctionClamp | None = None,
+    perturbation: TMSPerturbation | None = None,
     gate_drive: np.ndarray | None = None,
     learn: bool | None = None,
 ) -> NetworkTrajectory:
@@ -275,7 +325,8 @@ def run_epoch(
         )
         state = model.step(
             input_array[time_step],
-            clamp_conjunctions=clamp_is_active,
+            perturbation=perturbation,
+            perturbation_active=clamp_is_active,
             gate_external_input=(
                 None if gate_drive is None else gate_drive[time_step]
             ),
@@ -467,7 +518,7 @@ class SwitchingExperimentConfig:
     switch_probs: tuple[float, ...] = (0.125, 0.25, 0.5, 0.75) * 2
     protocol: EpochProtocol = field(default_factory=EpochProtocol)
     model_parameters: ModelParameters = field(default_factory=ModelParameters)
-    perturbation: ConjunctionClamp | None = None
+    perturbation: TMSPerturbation | None = None
     learn_during_trials: bool = True
 
     def __post_init__(self) -> None:
@@ -532,9 +583,10 @@ class TrialResult:
     chosen_response: int | None
     reaction_time_in_steps: float
     transition_type: TransitionType
-    perturbation: ConjunctionClamp | None
+    perturbation: TMSPerturbation | None
     trajectory: NetworkTrajectory
     combined_weights: np.ndarray  # snapshot of W after this trial, shape (num_features, num_conjunction_units)
+    recovery_latency_in_steps: float
 
     @property
     def correct(self) -> bool:
@@ -716,6 +768,47 @@ def _measure_response(
     return vocabulary.response_features[int(response_index)], float(first_time)
 
 
+def _measure_recovery_latency(
+    trajectory: NetworkTrajectory,
+    protocol: EpochProtocol,
+    vocabulary: Vocabulary,
+    correct_response: int,
+    perturbation: TMSPerturbation | None,
+) -> float:
+    """Measure how long it takes to recover the correct response after TMS.
+
+    The scan starts after the perturbation window ends, but never before the
+    standard reaction-time search begins. NaN means there was no perturbation
+    or the correct response never regained dominance.
+    """
+
+    if perturbation is None:
+        return float('nan')
+    if not (perturbation.target_conjunction_units or perturbation.target_gating_units):
+        return float('nan')
+
+    recovery_start = max(protocol.response_search_start, perturbation.window.stop)
+    eligible_activity = trajectory.feature_activity[
+        recovery_start:, list(vocabulary.response_features)
+    ]
+    if eligible_activity.size == 0:
+        return float('nan')
+
+    global_peak = float(eligible_activity.max())
+    if not np.isfinite(global_peak) or global_peak <= 0.0:
+        return float('nan')
+
+    above_threshold = np.argwhere(eligible_activity.T > 0.98 * global_peak)
+    if not above_threshold.size:
+        return float('nan')
+
+    for response_index, first_time in above_threshold:
+        if vocabulary.response_features[int(response_index)] == correct_response:
+            return float(first_time)
+
+    return float('nan')
+
+
 def _run_trial(
     model: PlasticAttractor,
     config: SwitchingExperimentConfig,
@@ -748,6 +841,13 @@ def _run_trial(
         trajectory,
         config.protocol,
         vocabulary,
+    )
+    recovery_latency = _measure_recovery_latency(
+        trajectory,
+        config.protocol,
+        vocabulary,
+        correct_response,
+        config.perturbation,
     )
 
     # Reward-gated consolidation of the gate eligibility trace (three-factor
@@ -788,6 +888,7 @@ def _run_trial(
         perturbation=config.perturbation,
         trajectory=trajectory,
         combined_weights=model.combined_weights,
+        recovery_latency_in_steps=recovery_latency,
     )
 
 

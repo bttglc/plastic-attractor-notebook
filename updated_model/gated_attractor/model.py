@@ -332,7 +332,8 @@ class PlasticAttractor:
         self,
         external_input: np.ndarray,
         *,
-        clamp_conjunctions: bool = False,
+        perturbation: object | None = None,
+        perturbation_active: bool = False,
         gate_external_input: np.ndarray | None = None,
         cue_signal_active: bool = False,
         pause_weight_learning: bool = False,
@@ -357,6 +358,16 @@ class PlasticAttractor:
         centered_conjunctions = (
             self._conjunction_activity - parameters.baseline_activity
         )
+
+        if perturbation is not None and perturbation_active:
+            clamp_value = float(getattr(perturbation, 'clamp_value', 0.0))
+            if getattr(perturbation, 'target_conjunction_units', False):
+                self._conjunction_activity.fill(clamp_value)
+                centered_conjunctions = (
+                    self._conjunction_activity - parameters.baseline_activity
+                )
+            if getattr(perturbation, 'target_gating_units', False):
+                self._gating_activity.fill(clamp_value)
 
         # Gate inhibition of the feature update reads the previous gate activity,
         # so all populations update synchronously from the same prior state. It
@@ -427,14 +438,17 @@ class PlasticAttractor:
             * self._random.standard_normal(self.number_of_conjunction_units)
         )
 
-        # The paper's TMS-like manipulation forces all conjunction units to 1.
-        if clamp_conjunctions:
-            next_conjunctions.fill(1.0)
-
         # Gate units are feedforward: driven by the previous cue activity plus
         # any teaching drive the experiment supplies this step, but only while
         # cue_signal_active -- see _next_gating_activity for why.
         next_gates = self._next_gating_activity(gate_external_input, cue_signal_active)
+
+        if perturbation is not None and perturbation_active:
+            clamp_value = float(getattr(perturbation, 'clamp_value', 0.0))
+            if getattr(perturbation, 'target_conjunction_units', False):
+                next_conjunctions.fill(clamp_value)
+            if getattr(perturbation, 'target_gating_units', False):
+                next_gates.fill(clamp_value)
 
         # All populations are updated synchronously from the previous state.
         self._feature_activity = next_features
