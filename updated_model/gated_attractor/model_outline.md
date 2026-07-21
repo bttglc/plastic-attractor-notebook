@@ -100,19 +100,47 @@ component, conjunction-unit selectivity drifts block to block and the
 congruency effect disappears.
 
 **Gating weights (cue -> gate input, gate -> feature output):**
-three-factor / eligibility-trace rule (Fremaux & Gerstner 2016):
-1. `_accumulate_gating_trace` builds a decayed trace (`gating_trace_decay=
-   0.98`) only while `cue_signal_active`.
-2. The trial runs under fixed gate weights; nothing applied until the outcome
-   is known.
-3. `consolidate_gating_trace(reward)`, once per trial, applies the trace
+three-factor / eligibility-trace rule (Fremaux & Gerstner 2016), applied
+identically to *both* gating pathways — cue -> gate input weights and
+gate -> feature output weights are two separate weight matrices but share
+one mechanism:
+1. `_accumulate_gating_trace` builds two decayed traces in parallel every
+   step (`gating_trace_decay=0.98`), only while `cue_signal_active`:
+   `_gating_input_trace = outer(centered_gates, centered_cues)` and
+   `_gating_output_trace = outer(centered_features, centered_gates)`
+   (masked to `_gating_output_mask`, section 5 above). Same covariance-style
+   Hebbian term as main W, just not applied to weights yet.
+2. The trial runs under fixed gate weights throughout; neither trace is
+   applied until the outcome is known.
+3. `consolidate_gating_trace(reward)`, once per trial, applies *both* traces
    scaled `+1`/`-1` by whether *the gate itself* won the correct side
    (`gate_winner_matches_task`) — not overall trial correctness, which would
    let unrelated W/congruency errors erode an already-correct gate mapping.
+   Same reward sign drives fast+slow updates on the input weights and
+   fast+slow updates on the output weights simultaneously:
+```
+gating_input_fast_weights  = clip(gating_input_fast_weights  + reward * gating_fast_learning_rate * gating_input_trace,  0, gating_maximum_fast_weight)
+gating_input_slow_weights  = clip(gating_input_slow_weights  + reward * gating_slow_learning_rate * gating_input_trace,  0, gating_maximum_slow_weight)
+gating_output_fast_weights[rows] = clip(gating_output_fast_weights[rows] + reward * gating_fast_learning_rate * gating_output_trace, 0, gating_maximum_fast_weight)
+gating_output_slow_weights[rows] = clip(gating_output_slow_weights[rows] + reward * gating_slow_learning_rate * gating_output_trace, 0, gating_maximum_slow_weight)
+```
+Same fast/slow split as main W (one large/volatile component, one small/
+anchoring component), same single `reward` scalar for all four lines — it's
+just the trace (`gating_input_trace` vs `gating_output_trace`) and the
+weight/rate/cap pair that differ per pathway. `rows = _suppressible_indices`
+restricts the output update to the colour/shape rows (cues/actions were
+never part of the output weight matrix to begin with, section 5 above).
+`reward < 0` still clips at a floor of 0, not a negative bound — a wrong-gate
+trial can only erase potentiation already accumulated on these weights, never
+push them negative.
 
 Output weights are also masked (`_gating_output_mask`, from
 `gate_target_indices`) at init and every trace step, so a gate's own
-dimension can never accumulate nonzero trace or weight.
+dimension can never accumulate nonzero trace or weight. The trace update is
+recursive (`trace_t = decay * trace_{t-1} + contribution_t`); zeroing
+`contribution_t` on masked entries every step, not just at init, keeps those
+entries at exactly 0 forever, so consolidation (which scales the trace by
+outcome and adds it to the weights) never moves them off 0 either.
 
 ## 6. Trial timing (`experiment.py::EpochProtocol`)
 
