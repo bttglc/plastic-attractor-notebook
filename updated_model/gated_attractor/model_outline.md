@@ -142,6 +142,40 @@ recursive (`trace_t = decay * trace_{t-1} + contribution_t`); zeroing
 entries at exactly 0 forever, so consolidation (which scales the trace by
 outcome and adds it to the weights) never moves them off 0 either.
 
+**Why enhancement has no learning rule.** `gating_to_relevant_feature_gain`
+scales a fixed mask (`_gating_relevant_mask`), not a weight matrix -- there
+is no plastic gate -> relevant-feature connection and no three-factor trace
+runs on it, unlike the suppression pathway above. Reason: the gate signal
+that would drive any such weight only encodes which dimension is relevant
+(colour vs. shape), never which member of the pair is presented (green vs.
+blue) -- same active gate on every trial of that rule regardless of which
+member shows up. A learned per-row weight would have no coincidence pattern
+to differentiate green's row from blue's; given roughly balanced
+presentation of each member, it would simply converge toward the value the
+fixed mask already assumes (1/1), after paying startup noise to get there.
+Same logic section 9 already used to justify hardcoding suppression's
+targets instead of leaving them for the trace to discover (no signal to
+prefer one).
+
+**Pair symmetry: suppression vs. enhancement.** The two pathways are
+asymmetric in opposite ways. Enhancement's connection is identical for both
+pair members by construction (`_gating_relevant_mask` is 1/1, always); the
+multiplicative `centered_features` term is what breaks the symmetry --
+whichever member is actually presented has high deviation from baseline and
+gets amplified, the absent member sits near baseline and gets ~0
+enhancement. Connection symmetric, effect deliberately asymmetric.
+Suppression's connection is not symmetric by construction:
+`_gating_output_mask` only fixes which rows are eligible (both members of
+the irrelevant pair, equally), but each eligible row's weight in
+`gating_output_fast_weights`/`gating_output_slow_weights` is learned
+independently -- nothing ties green's suppression weight to blue's. Its
+application also isn't gated by that feature's own activity, so it pulls on
+both members regardless of which is presented; the presented member just
+can't move (externally floored at 1.0, section 10), leaving the effect
+concentrated on the already-near-baseline absent member -- an arithmetic
+side effect of the floor, not a designed-in asymmetry. Connection
+not-necessarily-symmetric, effect asymmetric for an unrelated reason.
+
 ## 6. Trial timing (`experiment.py::EpochProtocol`)
 
 400 steps/trial: `[0, 51)` ISI (input=-1); `stimulus_window=[51, 101)`
@@ -194,7 +228,7 @@ signal to prefer one — gate output weights saturated symmetrically on both.
 weight always 0.0; gate winner matches the true task 100% of checked runs;
 the test now passes.
 
-## 10. Open question: selectivity fixed, behaviour not clearly better
+## 10. Selectivity fixed, behaviour not clearly better (accuracy gap closed in §13-14; structural finding below still stands)
 
 **Structural finding:** suppression is arithmetically incapable of acting
 while the stimulus is on screen — the irrelevant feature is externally
@@ -220,6 +254,21 @@ mechanism left selectivity worse, until combined with gain re-tuning.
 interval, cf. Rogers & Monsell 1995, Meiran 1996) so suppression has already
 engaged before the stimulus floors the irrelevant feature — a bigger
 structural change than a parameter tweak.
+
+**Resolved (accuracy), not resolved (structure):** section 13 traced the
+actual accuracy ceiling to routing instability from continuous fast Hebbian
+learning running every step of the whole trial, not specifically to this
+section's stimulus-window contamination hypothesis. Section 14's fast/slow
+weight-cap inversion (slow-dominant W) fixes that routing instability
+directly and raises real-block accuracy 0.565 -> 0.881 (sections 14-16)
+without ever touching the mechanism above — `gating_to_feature_gain` and the
+stimulus-window external floor are unchanged under `slowW3`, so the
+irrelevant feature is presumably still pinned at 1.0 during `stimulus_window`
+(not re-measured under slow-dominant W). So the practical question this
+section's title asks is closed: behaviour is now clearly better. The
+structural finding and the untried CSI candidate above remain open on their
+own terms, just lower-priority now that accuracy already sits near the
+feature-layer ceiling established in section 12.
 
 ## 11. Plasticity pause merged, gains re-tuned, measurement corrected
 
