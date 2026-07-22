@@ -1,0 +1,271 @@
+"""The plastic-attractor network and its one-step update equations.
+
+This module knows how activity and Hebbian weights change. It deliberately
+knows nothing about blocks, stimuli, reaction times, or accuracy.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from .task import COMPETING_FEATURE_GROUPS, Feature
+
+
+NUMBER_OF_FEATURE_UNITS = len(Feature)
+NUMBER_OF_CONJUNCTION_UNITS = 4
+
+
+# These dataclasses are named containers. They hold settings or recorded values.
+@dataclass(frozen=True)
+class ModelParameters:
+    """Named parameters for the two coupled neural populations.
+
+    The defaults use the values from the authors' public repository. Parameters
+    can be overridden directly when we later test new hypotheses.
+    """
+
+    baseline_activity: float = 0.175
+
+    conjunction_lateral_weight: float = -0.45
+    conjunction_self_weight: float = 1.00
+    feature_lateral_weight: float = -0.28
+    feature_self_weight: float = 0.73
+
+    conjunction_to_feature_gain: float = 0.08
+    feature_to_conjunction_gain: float = 0.04
+
+    conjunction_noise_standard_deviation: float = 0.005
+
+    fast_learning_rate: float = 0.02
+    slow_learning_rate: float = 0.0002
+    maximum_fast_weight: float = 1.0
+    maximum_slow_weight: float = 0.2
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.baseline_activity <= 1.0:
+            raise ValueError("baseline_activity must lie between 0 and 1")
+        if self.conjunction_noise_standard_deviation < 0:
+            raise ValueError("Noise standard deviation cannot be negative")
+        if self.fast_learning_rate < 0 or self.slow_learning_rate < 0:
+            raise ValueError("Learning rates cannot be negative")
+        if self.maximum_fast_weight <= 0 or self.maximum_slow_weight <= 0:
+            raise ValueError("Maximum weights must be positive")
+
+
+@dataclass(frozen=True)
+class NetworkState:
+    """Activity of both neural populations after one update."""
+
+    feature_activity: np.ndarray
+    conjunction_activity: np.ndarray
+
+
+def _bounded_activity(values: np.ndarray) -> np.ndarray:
+    """Keep every unit between silence (0) and maximum activity (1)."""
+
+    return np.clip(values, 0.0, 1.0)
+
+
+class PlasticAttractor:
+    """Six feature units recurrently coupled to four conjunction units."""
+
+    def __init__(
+        self,
+        seed: int = 0,
+        parameters: ModelParameters | None = None,
+        learn: bool = True,
+        *,
+        random_generator: np.random.RandomState | None = None,
+    ) -> None:
+        self.parameters = parameters or ModelParameters()
+        self.learn = learn
+
+        # The experiment can provide one shared generator so initialization,
+        # trial order, and neural noise all remain reproducible from one seed.
+        self._random = (
+            random_generator
+            if random_generator is not None
+            else np.random.RandomState(seed)
+        )
+
+        self._feature_recurrent_weights = self._build_feature_connections()
+        self._conjunction_recurrent_weights = self._build_conjunction_connections()
+        self._initialize_plastic_weights()
+
+        # Every instruction or trial epoch starts from zero activity.
+        self._feature_activity = np.zeros(self.number_of_feature_units)
+        self._conjunction_activity = np.zeros(self.number_of_conjunction_units)
+
+    @property
+    def number_of_feature_units(self) -> int:
+        return NUMBER_OF_FEATURE_UNITS
+
+    @property
+    def number_of_conjunction_units(self) -> int:
+        return NUMBER_OF_CONJUNCTION_UNITS
+
+    @property
+    def state(self) -> NetworkState:
+        """Return copies so callers cannot alter the live activity."""
+
+        return NetworkState(
+            feature_activity=self._feature_activity.copy(),
+            conjunction_activity=self._conjunction_activity.copy(),
+        )
+
+    @property
+    def combined_weights(self) -> np.ndarray:
+        """Return W, the sum of the fast and slow weight matrices."""
+
+        return self._combined_weights.copy()
+
+    @property
+    def fast_weights(self) -> np.ndarray:
+        return self._fast_weights.copy()
+
+    @property
+    def slow_weights(self) -> np.ndarray:
+        return self._slow_weights.copy()
+
+    def reset_activity(self) -> None:
+        """Reset activity while preserving everything the weights learned."""
+
+        self._feature_activity = np.zeros(self.number_of_feature_units)
+        self._conjunction_activity = np.zeros(self.number_of_conjunction_units)
+
+    def step(
+        self,
+        external_input: np.ndarray,
+        *,
+        clamp_conjunctions: bool = False,
+        learn: bool | None = None,
+    ) -> NetworkState:
+        """Advance the neural and Hebbian equations by one time step."""
+
+        input_vector = np.asarray(external_input, dtype=float)
+        expected_shape = (self.number_of_feature_units,)
+        if input_vector.shape != expected_shape:
+            raise ValueError(
+                f"external_input must have shape {expected_shape}; "
+                f"received {input_vector.shape}"
+            )
+
+        parameters = self.parameters
+
+        # The equations measure activity relative to the resting baseline.
+        centered_features = (
+            self._feature_activity - parameters.baseline_activity
+        )
+        centered_conjunctions = (
+            self._conjunction_activity - parameters.baseline_activity
+        )
+
+        # Feature units receive recurrent input, top-down input through W,
+        # and the instruction or stimulus supplied by the experiment.
+        next_features = _bounded_activity(
+            parameters.baseline_activity
+            + self._feature_recurrent_weights @ centered_features
+            + parameters.conjunction_to_feature_gain
+            * (self._combined_weights @ centered_conjunctions)
+            + input_vector
+        )
+
+        # Conjunction units receive recurrent input, bottom-up input through
+        # W transposed, and a small amount of random neural variation.
+        next_conjunctions = _bounded_activity(
+            parameters.baseline_activity
+            + self._conjunction_recurrent_weights @ centered_conjunctions
+            + parameters.feature_to_conjunction_gain
+            * (self._combined_weights.T @ centered_features)
+            + parameters.conjunction_noise_standard_deviation
+            * self._random.standard_normal(self.number_of_conjunction_units)
+        )
+
+        # The paper's TMS-like manipulation forces all conjunction units to 1.
+        if clamp_conjunctions:
+            next_conjunctions.fill(1.0)
+
+        # Both populations are updated synchronously from the previous state.
+        self._feature_activity = next_features
+        self._conjunction_activity = next_conjunctions
+
+        learning_is_on = self.learn if learn is None else learn
+        if learning_is_on:
+            self._update_plastic_weights()
+
+        return self.state
+
+    def feedback_eigenvalues(self) -> np.ndarray:
+        """Return the eigenvalues of W W.T used in the paper's analysis."""
+
+        return np.linalg.eigvalsh(
+            self._combined_weights @ self._combined_weights.T
+        )
+
+    def number_of_amplifying_eigenvalues(self) -> int:
+        """Count feedback eigenvalues greater than one."""
+
+        return int(np.sum(self.feedback_eigenvalues() > 1.0))
+
+    def _build_feature_connections(self) -> np.ndarray:
+        within_dimension = np.zeros(
+            (self.number_of_feature_units, self.number_of_feature_units)
+        )
+        for group in COMPETING_FEATURE_GROUPS:
+            within_dimension[np.ix_(group, group)] = 1.0
+
+        parameters = self.parameters
+        return (
+            parameters.feature_self_weight * np.eye(self.number_of_feature_units)
+            + parameters.feature_lateral_weight * within_dimension
+        )
+
+    def _build_conjunction_connections(self) -> np.ndarray:
+        parameters = self.parameters
+        return (
+            parameters.conjunction_self_weight
+            * np.eye(self.number_of_conjunction_units)
+            + parameters.conjunction_lateral_weight
+            * np.ones(
+                (self.number_of_conjunction_units, self.number_of_conjunction_units)
+            )
+        )
+
+    def _initialize_plastic_weights(self) -> None:
+        shape = (self.number_of_feature_units, self.number_of_conjunction_units)
+        parameters = self.parameters
+
+        self._fast_weights = self._random.uniform(
+            0.0,
+            parameters.maximum_fast_weight,
+            size=shape,
+        )
+        self._slow_weights = self._random.uniform(
+            0.0,
+            parameters.maximum_slow_weight,
+            size=shape,
+        )
+        self._combined_weights = self._fast_weights + self._slow_weights
+
+    def _update_plastic_weights(self) -> None:
+        parameters = self.parameters
+
+        # The outer product gives one Hebbian change for every connection.
+        change = np.outer(
+            self._feature_activity - parameters.baseline_activity,
+            self._conjunction_activity - parameters.baseline_activity,
+        )
+
+        self._fast_weights = np.clip(
+            self._fast_weights + parameters.fast_learning_rate * change,
+            0.0,
+            parameters.maximum_fast_weight,
+        )
+        self._slow_weights = np.clip(
+            self._slow_weights + parameters.slow_learning_rate * change,
+            0.0,
+            parameters.maximum_slow_weight,
+        )
+        self._combined_weights = self._fast_weights + self._slow_weights
